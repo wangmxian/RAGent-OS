@@ -49,24 +49,16 @@ interface DraftStep {
 interface Draft {
   id?: string;
   name: string;
-  icon: string;
   description: string;
   version: string;
   steps: DraftStep[];
-  systemPrompt: string;
-  defaultTemp: number;
-  enableThinking: boolean;
 }
 
 const EMPTY_DRAFT: Draft = {
   name: "",
-  icon: "",
   description: "",
   version: "v1",
   steps: [],
-  systemPrompt: "",
-  defaultTemp: 0.2,
-  enableThinking: false,
 };
 
 export default function SkillsPage() {
@@ -98,16 +90,12 @@ export default function SkillsPage() {
     setDraft({
       id: skill.id,
       name: skill.name,
-      icon: skill.icon ?? "",
       description: skill.description ?? "",
       version: skill.version || "v1",
       steps: skill.steps.map((step) => ({
         tool: step.tool,
         paramsText: JSON.stringify(step.params ?? {}, null, 2),
       })),
-      systemPrompt: skill.system_prompt ?? "",
-      defaultTemp: skill.default_temp ?? 0.2,
-      enableThinking: skill.enable_thinking,
     });
   }
 
@@ -167,14 +155,10 @@ export default function SkillsPage() {
       });
       const payload = {
         name: draft.name.trim() || "未命名 Skill",
-        icon: draft.icon.trim() || null,
         description: draft.description.trim() || null,
         version: draft.version.trim() || "v1",
         steps,
-        systemPrompt: draft.systemPrompt,
         toolIds: steps.map((step) => step.tool),
-        defaultTemp: draft.defaultTemp,
-        enableThinking: draft.enableThinking,
       };
       const res = await fetch(draft.id ? `/api/skills/${draft.id}` : "/api/skills", {
         method: draft.id ? "PATCH" : "POST",
@@ -242,25 +226,14 @@ export default function SkillsPage() {
             </h2>
           </div>
           <div className="space-y-3 px-4 py-3">
-            <div className="grid grid-cols-[64px_1fr] gap-2">
-              <Field label="图标">
-                <input
-                  value={draft.icon}
-                  onChange={(e) => setDraft({ ...draft, icon: e.target.value })}
-                  className="input text-center"
-                  maxLength={2}
-                  placeholder="S"
-                />
-              </Field>
-              <Field label="名称">
-                <input
-                  value={draft.name}
-                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                  className="input"
-                  placeholder="NGFAI 分析"
-                />
-              </Field>
-            </div>
+            <Field label="名称">
+              <input
+                value={draft.name}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                className="input"
+                placeholder="NGFAI 分析"
+              />
+            </Field>
             <Field label="描述">
               <textarea
                 value={draft.description}
@@ -271,52 +244,13 @@ export default function SkillsPage() {
                 placeholder="说明这个 Skill 何时被 Agent 选择"
               />
             </Field>
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="版本">
-                <input
-                  value={draft.version}
-                  onChange={(e) =>
-                    setDraft({ ...draft, version: e.target.value })
-                  }
-                  className="input"
-                />
-              </Field>
-              <Field label={`Temperature ${draft.defaultTemp.toFixed(2)}`}>
-                <input
-                  type="range"
-                  min={0}
-                  max={1.5}
-                  step={0.05}
-                  value={draft.defaultTemp}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      defaultTemp: Number(e.target.value),
-                    })
-                  }
-                  className="h-10 w-full"
-                />
-              </Field>
-            </div>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
+            <Field label="版本">
               <input
-                type="checkbox"
-                className="accent-slate-950"
-                checked={draft.enableThinking}
+                value={draft.version}
                 onChange={(e) =>
-                  setDraft({ ...draft, enableThinking: e.target.checked })
+                  setDraft({ ...draft, version: e.target.value })
                 }
-              />
-              默认启用思考模式
-            </label>
-            <Field label="System Prompt">
-              <textarea
-                value={draft.systemPrompt}
-                onChange={(e) =>
-                  setDraft({ ...draft, systemPrompt: e.target.value })
-                }
-                className="input min-h-20 font-mono"
-                placeholder="可选：Skill 执行后的回答风格或约束"
+                className="input"
               />
             </Field>
             {error && (
@@ -455,7 +389,6 @@ export default function SkillsPage() {
                 >
                   <button onClick={() => edit(skill)} className="min-w-0 text-left">
                     <div className="flex items-center gap-2">
-                      <span className="text-base">{skill.icon || "S"}</span>
                       <span className="truncate text-sm font-semibold">
                         {skill.name}
                       </span>
