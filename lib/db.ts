@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import fs from "node:fs";
 import path from "node:path";
+import { RAG_TOOLS } from "./mcp/rag-tools";
 
 const SQLITE_PATH =
   process.env.SQLITE_PATH || path.join(process.cwd(), "data", "app.db");
@@ -150,6 +151,21 @@ function migrate(db: Database.Database) {
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS mcp_tools (
+      id            TEXT PRIMARY KEY,
+      name          TEXT NOT NULL UNIQUE,
+      path_suffix   TEXT NOT NULL,
+      description   TEXT NOT NULL DEFAULT '',
+      schema        TEXT NOT NULL DEFAULT '{}',
+      enabled       INTEGER NOT NULL DEFAULT 1,
+      handler_type  TEXT NOT NULL CHECK(handler_type IN ('local','rag-http','llm')),
+      server_id     TEXT,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      FOREIGN KEY(server_id) REFERENCES mcp_servers(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcp_tools_enabled ON mcp_tools(enabled);
   `);
 
   // 后续新增字段：旧库幂等迁移
@@ -175,6 +191,7 @@ function migrate(db: Database.Database) {
       ON skill_run_logs(conversation_id, created_at);
   `);
   seedDefaultRagMcpServer(db);
+  seedDefaultMcpTools(db);
   seedDefaultSkills(db);
 }
 
@@ -226,6 +243,65 @@ function seedDefaultRagMcpServer(db: Database.Database) {
     t,
     t,
   );
+}
+
+function seedDefaultMcpTools(db: Database.Database) {
+  const t = now();
+  const ragServer = db
+    .prepare(`SELECT id FROM mcp_servers WHERE kind = 'rag-http' ORDER BY created_at ASC LIMIT 1`)
+    .get() as { id: string } | undefined;
+
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO mcp_tools (
+       id, name, path_suffix, description, schema, enabled, handler_type,
+       server_id, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  insert.run(
+    "tool-rag-search",
+    "ragSearch",
+    "rag-search",
+    "Enterprise knowledge-base vector search. Uses local sqlite-vec and returns top matching chunks.",
+    JSON.stringify({ query: "string", topK: "number", fileIds: "string[]" }),
+    1,
+    "local",
+    null,
+    t,
+    t,
+  );
+  insert.run(
+    "tool-llm-summary",
+    "llmSummary",
+    "llm-summary",
+    "Summarize upstream tool results, knowledge chunks, and the user question into a final answer.",
+    JSON.stringify({
+      question: "string",
+      context: "unknown",
+      data: "unknown",
+      knowledge: "unknown",
+    }),
+    1,
+    "llm",
+    null,
+    t,
+    t,
+  );
+
+  for (const tool of RAG_TOOLS) {
+    insert.run(
+      `tool-${tool.name}`,
+      tool.name,
+      tool.pathSuffix,
+      tool.description,
+      JSON.stringify({ type: "zod", source: "RAG_TOOLS", name: tool.name }),
+      1,
+      "rag-http",
+      ragServer?.id ?? null,
+      t,
+      t,
+    );
+  }
 }
 
 function seedDefaultSkills(db: Database.Database) {

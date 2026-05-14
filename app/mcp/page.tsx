@@ -14,76 +14,83 @@ import {
   XCircle,
 } from "lucide-react";
 
+type HandlerType = "local" | "rag-http" | "llm";
 type McpKind = "generic" | "rag-http";
 type McpTransport = "stdio" | "http" | "sse";
+
+interface McpTool {
+  id: string;
+  name: string;
+  pathSuffix: string;
+  description: string;
+  schema: Record<string, unknown>;
+  enabled: boolean;
+  handlerType: HandlerType;
+  serverId: string | null;
+}
 
 interface McpServer {
   id: string;
   name: string;
   kind: McpKind;
   transport: McpTransport;
-  command: string | null;
-  args: string[];
-  url: string | null;
   base_url: string | null;
-  auth_token: string | null;
-  has_token?: boolean;
-  env: Record<string, string>;
+  url: string | null;
   enabled: boolean;
 }
 
-interface McpTool {
+interface ToolDraft {
+  id?: string;
   name: string;
   pathSuffix: string;
   description: string;
-  schema: unknown;
+  schemaText: string;
   enabled: boolean;
-  handlerType?: string;
-  serverName?: string;
+  handlerType: HandlerType;
+  serverId: string;
 }
 
-interface Draft {
+interface ServerDraft {
   id?: string;
   name: string;
-  kind: McpKind;
-  transport: McpTransport;
-  command: string;
-  args: string;
-  url: string;
   baseUrl: string;
-  authToken: string;
   enabled: boolean;
 }
 
-const EMPTY_DRAFT: Draft = {
+const EMPTY_TOOL: ToolDraft = {
   name: "",
-  kind: "rag-http",
-  transport: "http",
-  command: "",
-  args: "",
-  url: "",
+  pathSuffix: "",
+  description: "",
+  schemaText: "{\n  \"query\": \"string\"\n}",
+  enabled: true,
+  handlerType: "rag-http",
+  serverId: "",
+};
+
+const EMPTY_SERVER: ServerDraft = {
+  name: "",
   baseUrl: "",
-  authToken: "",
   enabled: true,
 };
 
 export default function McpPage() {
-  const [servers, setServers] = useState<McpServer[]>([]);
   const [tools, setTools] = useState<McpTool[]>([]);
-  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
-  const [saving, setSaving] = useState(false);
+  const [servers, setServers] = useState<McpServer[]>([]);
+  const [toolDraft, setToolDraft] = useState<ToolDraft>(EMPTY_TOOL);
+  const [serverDraft, setServerDraft] = useState<ServerDraft>(EMPTY_SERVER);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   async function load() {
     setError(null);
-    const [mcpRes, toolsRes] = await Promise.all([
+    const [toolRes, serverRes] = await Promise.all([
+      fetch("/api/mcp-tools", { cache: "no-store" }),
       fetch("/api/mcp", { cache: "no-store" }),
-      fetch("/api/tools", { cache: "no-store" }),
     ]);
-    const mcpJson = await mcpRes.json();
-    const toolsJson = await toolsRes.json();
-    setServers(mcpJson.servers || []);
-    setTools(toolsJson.mcpTools || []);
+    const toolJson = await toolRes.json();
+    const serverJson = await serverRes.json();
+    setTools(toolJson.tools || []);
+    setServers(serverJson.servers || []);
   }
 
   useEffect(() => {
@@ -95,45 +102,44 @@ export default function McpPage() {
     [tools],
   );
 
-  function edit(server: McpServer) {
-    setDraft({
-      id: server.id,
-      name: server.name,
-      kind: server.kind,
-      transport: server.transport,
-      command: server.command ?? "",
-      args: server.args.join(" "),
-      url: server.url ?? "",
-      baseUrl: server.base_url ?? "",
-      authToken: "",
-      enabled: server.enabled,
+  function editTool(tool: McpTool) {
+    setToolDraft({
+      id: tool.id,
+      name: tool.name,
+      pathSuffix: tool.pathSuffix,
+      description: tool.description,
+      schemaText: JSON.stringify(tool.schema ?? {}, null, 2),
+      enabled: tool.enabled,
+      handlerType: tool.handlerType,
+      serverId: tool.serverId ?? "",
     });
   }
 
-  async function save() {
+  async function saveTool() {
     setSaving(true);
     setError(null);
     try {
-      const payload = {
-        id: draft.id,
-        name: draft.name.trim() || "未命名 MCP",
-        kind: draft.kind,
-        transport: draft.transport,
-        command: draft.command.trim() || null,
-        args: draft.args.split(/\s+/).filter(Boolean),
-        url: draft.url.trim() || null,
-        baseUrl: draft.baseUrl.trim() || null,
-        authToken: draft.authToken.trim() || undefined,
-        enabled: draft.enabled,
-      };
-      const res = await fetch("/api/mcp", {
-        method: draft.id ? "PATCH" : "POST",
+      const schema = JSON.parse(toolDraft.schemaText || "{}");
+      if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+        throw new Error("参数 schema 必须是 JSON 对象");
+      }
+      const res = await fetch("/api/mcp-tools", {
+        method: toolDraft.id ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          id: toolDraft.id,
+          name: toolDraft.name,
+          pathSuffix: toolDraft.pathSuffix,
+          description: toolDraft.description,
+          schema,
+          enabled: toolDraft.enabled,
+          handlerType: toolDraft.handlerType,
+          serverId: toolDraft.serverId || null,
+        }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "保存失败");
-      setDraft(EMPTY_DRAFT);
+      if (!res.ok) throw new Error(json.error || "保存工具失败");
+      setToolDraft(EMPTY_TOOL);
       await load();
     } catch (e: any) {
       setError(e?.message || String(e));
@@ -142,39 +148,74 @@ export default function McpPage() {
     }
   }
 
-  async function remove(id: string) {
-    if (!confirm("删除这个 MCP 配置？")) return;
-    setError(null);
-    const res = await fetch(`/api/mcp?id=${encodeURIComponent(id)}`, {
+  async function toggleTool(tool: McpTool) {
+    const res = await fetch("/api/mcp-tools", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: tool.id, enabled: !tool.enabled }),
+    });
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      setError(json.error || "更新工具失败");
+      return;
+    }
+    await load();
+  }
+
+  async function removeTool(id: string) {
+    if (!confirm("删除这个工具配置？")) return;
+    const res = await fetch(`/api/mcp-tools?id=${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error || "删除失败");
+      setError(json.error || "删除工具失败");
       return;
     }
-    if (draft.id === id) setDraft(EMPTY_DRAFT);
+    if (toolDraft.id === id) setToolDraft(EMPTY_TOOL);
     await load();
   }
 
-  async function toggle(server: McpServer) {
-    const res = await fetch("/api/mcp", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: server.id, enabled: !server.enabled }),
+  function editServer(server: McpServer) {
+    setServerDraft({
+      id: server.id,
+      name: server.name,
+      baseUrl: server.base_url ?? server.url ?? "",
+      enabled: server.enabled,
     });
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      setError(json.error || "更新失败");
-      return;
+  }
+
+  async function saveServer() {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/mcp", {
+        method: serverDraft.id ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: serverDraft.id,
+          name: serverDraft.name || "RAG HTTP MCP",
+          kind: "rag-http",
+          transport: "http",
+          baseUrl: serverDraft.baseUrl,
+          enabled: serverDraft.enabled,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "保存连接失败");
+      setServerDraft(EMPTY_SERVER);
+      await load();
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally {
+      setSaving(false);
     }
-    await load();
   }
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-slate-950">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4">
           <Link
             href="/"
             className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-950"
@@ -185,10 +226,10 @@ export default function McpPage() {
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-950 text-white">
             <Plug size={15} />
           </div>
-          <div className="min-w-0">
-            <h1 className="text-sm font-semibold leading-tight">MCP 管理</h1>
+          <div>
+            <h1 className="text-sm font-semibold leading-tight">MCP 工具配置</h1>
             <p className="text-xs text-slate-500">
-              工具配置、启用状态与可用 MCP 工具
+              配置工具名称、描述、参数 schema 和调用路径，供 Agent 与 Skill 编排使用
             </p>
           </div>
           <button
@@ -201,189 +242,232 @@ export default function McpPage() {
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-6xl gap-4 px-4 py-5 lg:grid-cols-[380px_1fr]">
-        <section className="rounded-md border border-slate-200 bg-white">
-          <div className="border-b border-slate-200 px-4 py-3">
-            <h2 className="text-sm font-semibold">配置</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              当前支持 RAG HTTP MCP，通用 stdio/sse 保留为配置占位。
-            </p>
-          </div>
-          <div className="space-y-3 p-4">
-            <Field label="名称">
-              <input
-                value={draft.name}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                className="input"
-                placeholder="RuoYi RAG MCP"
-              />
-            </Field>
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="类型">
-                <select
-                  value={draft.kind}
+      <div className="mx-auto grid max-w-7xl gap-4 px-4 py-5 lg:grid-cols-[420px_1fr]">
+        <section className="space-y-4">
+          <Panel title={toolDraft.id ? "编辑工具" : "新建工具"}>
+            <div className="space-y-3">
+              <Field label="工具名称">
+                <input
+                  value={toolDraft.name}
                   onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      kind: e.target.value as McpKind,
-                      transport:
-                        e.target.value === "rag-http" ? "http" : draft.transport,
-                    })
+                    setToolDraft({ ...toolDraft, name: e.target.value })
                   }
-                  className="input"
-                >
-                  <option value="rag-http">rag-http</option>
-                  <option value="generic">generic</option>
-                </select>
+                  className="input font-mono"
+                  placeholder="cr241AfmtNgFaiPareto"
+                />
               </Field>
-              <Field label="传输">
-                <select
-                  value={draft.transport}
+              <Field label="Path Suffix">
+                <input
+                  value={toolDraft.pathSuffix}
                   onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      transport: e.target.value as McpTransport,
-                    })
+                    setToolDraft({ ...toolDraft, pathSuffix: e.target.value })
                   }
-                  className="input"
-                >
-                  <option value="http">http</option>
-                  <option value="stdio">stdio</option>
-                  <option value="sse">sse</option>
-                </select>
+                  className="input font-mono"
+                  placeholder="cr241-afmt-ngfai-pareto"
+                />
               </Field>
-            </div>
-            <Field label="Base URL">
-              <input
-                value={draft.baseUrl}
-                onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
-                className="input font-mono"
-                placeholder="http://10.1.101.65:8080"
-              />
-            </Field>
-            <Field label="URL">
-              <input
-                value={draft.url}
-                onChange={(e) => setDraft({ ...draft, url: e.target.value })}
-                className="input font-mono"
-                placeholder="sse/http endpoint"
-              />
-            </Field>
-            <Field label="Command">
-              <input
-                value={draft.command}
-                onChange={(e) => setDraft({ ...draft, command: e.target.value })}
-                className="input font-mono"
-                placeholder="npx"
-              />
-            </Field>
-            <Field label="Args">
-              <input
-                value={draft.args}
-                onChange={(e) => setDraft({ ...draft, args: e.target.value })}
-                className="input font-mono"
-                placeholder="-y @modelcontextprotocol/server-filesystem"
-              />
-            </Field>
-            <Field label="Auth Token">
-              <input
-                value={draft.authToken}
-                onChange={(e) =>
-                  setDraft({ ...draft, authToken: e.target.value })
-                }
-                className="input font-mono"
-                placeholder={draft.id ? "留空则保持原 token" : "Bearer token"}
-                type="password"
-              />
-            </Field>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                className="accent-slate-950"
-                checked={draft.enabled}
-                onChange={(e) =>
-                  setDraft({ ...draft, enabled: e.target.checked })
-                }
-              />
-              启用
-            </label>
-            {error && (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                {error}
+              <Field label="描述">
+                <textarea
+                  value={toolDraft.description}
+                  onChange={(e) =>
+                    setToolDraft({ ...toolDraft, description: e.target.value })
+                  }
+                  className="input min-h-20"
+                  placeholder="说明这个工具什么时候使用、需要什么参数、返回什么结果"
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="处理器">
+                  <select
+                    value={toolDraft.handlerType}
+                    onChange={(e) =>
+                      setToolDraft({
+                        ...toolDraft,
+                        handlerType: e.target.value as HandlerType,
+                      })
+                    }
+                    className="input"
+                  >
+                    <option value="rag-http">rag-http</option>
+                    <option value="local">local</option>
+                    <option value="llm">llm</option>
+                  </select>
+                </Field>
+                <Field label="MCP 连接">
+                  <select
+                    value={toolDraft.serverId}
+                    onChange={(e) =>
+                      setToolDraft({ ...toolDraft, serverId: e.target.value })
+                    }
+                    className="input"
+                    disabled={toolDraft.handlerType !== "rag-http"}
+                  >
+                    <option value="">默认启用连接</option>
+                    {servers.map((server) => (
+                      <option key={server.id} value={server.id}>
+                        {server.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
               </div>
-            )}
-            <div className="flex justify-end gap-2">
-              {draft.id && (
-                <button
-                  onClick={() => setDraft(EMPTY_DRAFT)}
-                  className="rounded-md border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
-                >
-                  新建
-                </button>
+              <Field label="参数 Schema JSON">
+                <textarea
+                  value={toolDraft.schemaText}
+                  onChange={(e) =>
+                    setToolDraft({ ...toolDraft, schemaText: e.target.value })
+                  }
+                  className="input min-h-40 font-mono"
+                  spellCheck={false}
+                />
+              </Field>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  className="accent-slate-950"
+                  checked={toolDraft.enabled}
+                  onChange={(e) =>
+                    setToolDraft({ ...toolDraft, enabled: e.target.checked })
+                  }
+                />
+                启用工具
+              </label>
+              {error && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {error}
+                </div>
               )}
-              <button
-                onClick={save}
-                disabled={saving}
-                className="flex items-center gap-1.5 rounded-md bg-slate-950 px-3 py-2 text-xs text-white hover:bg-slate-800 disabled:opacity-50"
-              >
-                <Save size={13} />
-                保存
-              </button>
+              <div className="flex justify-end gap-2">
+                {toolDraft.id && (
+                  <button
+                    onClick={() => setToolDraft(EMPTY_TOOL)}
+                    className="rounded-md border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
+                  >
+                    新建
+                  </button>
+                )}
+                <button
+                  onClick={saveTool}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 rounded-md bg-slate-950 px-3 py-2 text-xs text-white hover:bg-slate-800 disabled:opacity-50"
+                >
+                  <Save size={13} />
+                  保存工具
+                </button>
+              </div>
             </div>
-          </div>
+          </Panel>
+
+          <Panel title="MCP HTTP 连接">
+            <div className="space-y-3">
+              <Field label="连接名称">
+                <input
+                  value={serverDraft.name}
+                  onChange={(e) =>
+                    setServerDraft({ ...serverDraft, name: e.target.value })
+                  }
+                  className="input"
+                  placeholder="RuoYi RAG MCP"
+                />
+              </Field>
+              <Field label="Base URL">
+                <input
+                  value={serverDraft.baseUrl}
+                  onChange={(e) =>
+                    setServerDraft({ ...serverDraft, baseUrl: e.target.value })
+                  }
+                  className="input font-mono"
+                  placeholder="http://10.1.101.65:8080"
+                />
+              </Field>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  className="accent-slate-950"
+                  checked={serverDraft.enabled}
+                  onChange={(e) =>
+                    setServerDraft({ ...serverDraft, enabled: e.target.checked })
+                  }
+                />
+                启用连接
+              </label>
+              <div className="flex justify-end gap-2">
+                {serverDraft.id && (
+                  <button
+                    onClick={() => setServerDraft(EMPTY_SERVER)}
+                    className="rounded-md border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
+                  >
+                    新建
+                  </button>
+                )}
+                <button
+                  onClick={saveServer}
+                  disabled={saving}
+                  className="rounded-md border border-slate-950 bg-white px-3 py-2 text-xs text-slate-950 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  保存连接
+                </button>
+              </div>
+            </div>
+          </Panel>
         </section>
 
         <section className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
-            <Metric icon={<Database size={15} />} label="配置数" value={servers.length} />
+            <Metric icon={<Wrench size={15} />} label="工具数" value={tools.length} />
             <Metric
               icon={<CheckCircle2 size={15} />}
-              label="已启用"
-              value={servers.filter((server) => server.enabled).length}
+              label="已启用工具"
+              value={enabledToolCount}
             />
-            <Metric icon={<Wrench size={15} />} label="可用工具" value={enabledToolCount} />
+            <Metric
+              icon={<Database size={15} />}
+              label="MCP 连接"
+              value={servers.length}
+            />
           </div>
 
-          <div className="rounded-md border border-slate-200 bg-white">
-            <div className="border-b border-slate-200 px-4 py-3">
-              <h2 className="text-sm font-semibold">MCP 配置</h2>
-            </div>
+          <Panel title="工具调用配置">
             <div className="divide-y divide-slate-100">
-              {servers.length === 0 && (
+              {tools.length === 0 && (
                 <div className="px-4 py-8 text-center text-sm text-slate-500">
-                  暂无 MCP 配置
+                  暂无工具配置
                 </div>
               )}
-              {servers.map((server) => (
+              {tools.map((tool) => (
                 <div
-                  key={server.id}
+                  key={tool.id}
                   className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto]"
                 >
                   <button
-                    onClick={() => edit(server)}
+                    onClick={() => editTool(tool)}
                     className="min-w-0 text-left"
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium">
-                        {server.name}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-sm font-semibold">
+                        {tool.name}
                       </span>
-                      <Status enabled={server.enabled} />
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">
+                        {tool.pathSuffix}
+                      </span>
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                        {tool.handlerType}
+                      </span>
+                      <Status enabled={tool.enabled} />
                     </div>
-                    <div className="mt-1 truncate text-xs text-slate-500">
-                      {server.kind} / {server.transport}
-                      {server.base_url ? ` / ${server.base_url}` : ""}
-                      {server.url ? ` / ${server.url}` : ""}
-                    </div>
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+                      {tool.description || "未填写描述"}
+                    </p>
                   </button>
                   <div className="flex items-center gap-1.5">
                     <button
-                      onClick={() => toggle(server)}
+                      onClick={() => toggleTool(tool)}
                       className="rounded-md border border-slate-200 px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
                     >
-                      {server.enabled ? "停用" : "启用"}
+                      {tool.enabled ? "停用" : "启用"}
                     </button>
                     <button
-                      onClick={() => remove(server.id)}
+                      onClick={() => removeTool(tool.id)}
                       className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
                       title="删除"
                     >
@@ -393,42 +477,47 @@ export default function McpPage() {
                 </div>
               ))}
             </div>
-          </div>
+          </Panel>
 
-          <div className="rounded-md border border-slate-200 bg-white">
-            <div className="border-b border-slate-200 px-4 py-3">
-              <h2 className="text-sm font-semibold">可用 MCP 工具</h2>
-            </div>
-            <div className="grid gap-2 p-3">
-              {tools.length === 0 && (
-                <div className="px-4 py-8 text-center text-sm text-slate-500">
-                  暂无可用 MCP 工具
-                </div>
-              )}
-              {tools.map((tool) => (
-                <div
-                  key={`${tool.serverName || "local"}:${tool.name}:${tool.pathSuffix}`}
-                  className="rounded-md border border-slate-200 px-3 py-2"
+          <Panel title="MCP 连接">
+            <div className="divide-y divide-slate-100">
+              {servers.map((server) => (
+                <button
+                  key={server.id}
+                  onClick={() => editServer(server)}
+                  className="block w-full px-4 py-3 text-left hover:bg-slate-50"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm text-slate-950">
-                      {tool.name}
-                    </span>
-                    <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">
-                      {tool.pathSuffix}
-                    </span>
-                    <Status enabled={tool.enabled} />
+                    <span className="text-sm font-medium">{server.name}</span>
+                    <Status enabled={server.enabled} />
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-slate-500">
-                    {tool.description}
-                  </p>
-                </div>
+                  <div className="mt-1 truncate text-xs text-slate-500">
+                    {server.kind} / {server.base_url || server.url || "未配置 URL"}
+                  </div>
+                </button>
               ))}
             </div>
-          </div>
+          </Panel>
         </section>
       </div>
     </main>
+  );
+}
+
+function Panel({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-md border border-slate-200 bg-white">
+      <div className="border-b border-slate-200 px-4 py-3">
+        <h2 className="text-sm font-semibold">{title}</h2>
+      </div>
+      {children}
+    </section>
   );
 }
 

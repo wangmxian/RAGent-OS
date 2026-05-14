@@ -43,7 +43,16 @@ export async function callRagHttpTool(
   if (!def) {
     throw new RagMcpHttpError(`Unknown RAG MCP tool: ${toolName}`);
   }
+  return callRagHttpPath(server, toolName, def.pathSuffix, args, options);
+}
 
+export async function callRagHttpPath(
+  server: McpServerRow,
+  toolName: string,
+  pathSuffix: string,
+  args: Record<string, unknown>,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -71,7 +80,7 @@ export async function callRagHttpTool(
 
   let res: Response;
   try {
-    res = await fetch(buildToolUrl(server, def.pathSuffix), {
+    res = await fetch(buildToolUrl(server, pathSuffix), {
       method: "POST",
       headers,
       body: JSON.stringify(args ?? {}),
