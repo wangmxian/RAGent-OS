@@ -10,6 +10,7 @@ import {
   Plug,
   Search,
   SlidersHorizontal,
+  ScrollText,
 } from "lucide-react";
 import Message, { type Role, type SourceHit } from "./Message";
 import FilesPanel from "./FilesPanel";
@@ -330,6 +331,14 @@ export default function Chat() {
           >
             <Sparkles size={14} />
             {activeSkill ? `${activeSkill.icon || ""} ${activeSkill.name}` : "Skill 配置"}
+          </a>
+          <a
+            href="/prompt"
+            title="Prompt 配置"
+            className="h-8 hidden sm:flex items-center gap-1.5 text-xs px-3 rounded-md border bg-white border-slate-200 text-slate-600 hover:text-slate-950 hover:bg-slate-50"
+          >
+            <ScrollText size={14} />
+            Prompt
           </a>
           <button
             onClick={() => setShowFiles(true)}
