@@ -11,6 +11,7 @@ import {
   Search,
   SlidersHorizontal,
   ScrollText,
+  ListTree,
 } from "lucide-react";
 import Message, { type Role, type SourceHit } from "./Message";
 import FilesPanel from "./FilesPanel";
@@ -339,6 +340,14 @@ export default function Chat() {
           >
             <ScrollText size={14} />
             Prompt
+          </a>
+          <a
+            href="/logs"
+            title="执行日志"
+            className="h-8 hidden sm:flex items-center gap-1.5 text-xs px-3 rounded-md border bg-white border-slate-200 text-slate-600 hover:text-slate-950 hover:bg-slate-50"
+          >
+            <ListTree size={14} />
+            日志
           </a>
           <button
             onClick={() => setShowFiles(true)}
