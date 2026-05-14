@@ -19,6 +19,7 @@ import {
   type UnifiedMcpToolDescriptor,
 } from "@/lib/mcp/dispatcher";
 import { renderAgentPrompt } from "@/lib/agent-prompt";
+import { createExecutionLog } from "@/lib/execution-logs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -128,6 +129,7 @@ export async function POST(req: NextRequest) {
       emit("start", { model, enableThinking, ts: Date.now() });
 
       try {
+        const executionStartedAt = Date.now();
         const decision: AgentDecision = selectedSkill
           ? {
               type: "skill_call",
@@ -168,6 +170,16 @@ export async function POST(req: NextRequest) {
             });
             chunkIdx = streamed.chunks;
           }
+          createExecutionLog({
+            conversationId,
+            mode: "chat",
+            target: null,
+            input: buildDefaultArgs(messages, fileIds),
+            decision,
+            output: collectedAnswer,
+            ok: true,
+            durationMs: Date.now() - executionStartedAt,
+          });
         } else if (decision.type === "mcp_call") {
           const startedAt = Date.now();
           const params = normalizeMcpParams(decision.tool, decision.params, fileIds);
@@ -193,6 +205,16 @@ export async function POST(req: NextRequest) {
           sources = sourcesFromMcpResult(output);
           if (sources.length) emit("sources", { hits: sources });
           emitAnswer(finalAnswerFromMcpResult(output));
+          createExecutionLog({
+            conversationId,
+            mode: "mcp_call",
+            target: decision.tool,
+            input: params,
+            decision,
+            output,
+            ok: true,
+            durationMs: Date.now() - executionStartedAt,
+          });
         } else {
           const skill = getSkill(decision.skill);
           if (!skill) throw new Error(`Skill not found: ${decision.skill}`);
@@ -240,6 +262,17 @@ export async function POST(req: NextRequest) {
             error: skillResult.error,
             durationMs: skillResult.durationMs,
           });
+          createExecutionLog({
+            conversationId,
+            mode: "skill_call",
+            target: skill.id,
+            input: args,
+            decision,
+            output: skillResult,
+            ok: skillResult.ok,
+            error: skillResult.error,
+            durationMs: Date.now() - executionStartedAt,
+          });
         }
 
         if (
@@ -281,6 +314,17 @@ export async function POST(req: NextRequest) {
         });
       } catch (err: any) {
         console.error("[chat] error", err);
+        createExecutionLog({
+          conversationId,
+          mode: "chat",
+          target: null,
+          input: buildDefaultArgs(messages, fileIds),
+          decision: null,
+          output: null,
+          ok: false,
+          error: err?.message || String(err),
+          durationMs: 0,
+        });
         emit("error", { message: err?.message || String(err) });
       } finally {
         controller.close();

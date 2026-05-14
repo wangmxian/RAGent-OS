@@ -173,6 +173,23 @@ function migrate(db: Database.Database) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS execution_logs (
+      id              TEXT PRIMARY KEY,
+      conversation_id TEXT,
+      mode            TEXT NOT NULL CHECK(mode IN ('chat','mcp_call','skill_call')),
+      target          TEXT,
+      input           TEXT NOT NULL,
+      decision        TEXT NOT NULL,
+      output          TEXT NOT NULL,
+      ok              INTEGER NOT NULL,
+      error           TEXT,
+      duration_ms     INTEGER NOT NULL,
+      created_at      INTEGER NOT NULL,
+      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_execution_logs_created_at
+      ON execution_logs(created_at DESC);
   `);
 
   // 后续新增字段：旧库幂等迁移
