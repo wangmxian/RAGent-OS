@@ -321,6 +321,14 @@ export default function Chat() {
             <Plug size={14} />
             MCP 配置
           </button>
+          <a
+            href="/mcp"
+            title="MCP 管理页"
+            className="h-8 hidden sm:flex items-center gap-1.5 text-xs px-3 rounded-md border bg-white border-slate-200 text-slate-600 hover:text-slate-950 hover:bg-slate-50"
+          >
+            <Plug size={14} />
+            MCP 管理页
+          </a>
           <button
             onClick={() => setShowSkills(true)}
             title="Skill 配置"
