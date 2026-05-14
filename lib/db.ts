@@ -166,6 +166,13 @@ function migrate(db: Database.Database) {
       FOREIGN KEY(server_id) REFERENCES mcp_servers(id) ON DELETE SET NULL
     );
     CREATE INDEX IF NOT EXISTS idx_mcp_tools_enabled ON mcp_tools(enabled);
+
+    CREATE TABLE IF NOT EXISTS prompt_configs (
+      key        TEXT PRIMARY KEY,
+      content    TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
 
   // 后续新增字段：旧库幂等迁移

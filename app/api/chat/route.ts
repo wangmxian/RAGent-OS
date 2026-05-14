@@ -18,6 +18,7 @@ import {
   listUnifiedMcpTools,
   type UnifiedMcpToolDescriptor,
 } from "@/lib/mcp/dispatcher";
+import { renderAgentPrompt } from "@/lib/agent-prompt";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -328,31 +329,10 @@ async function decideExecution(
   const res = await llm.invoke(
     [
       new SystemMessage(
-        [
-          "You are the routing Agent for an enterprise AI scheduler.",
-          "Return strict JSON only. Do not use markdown. Do not explain the decision.",
-          "",
-          "Decision rules:",
-          "1. If the question can be answered directly, use chat.",
-          "2. If exactly one MCP tool is sufficient, use mcp_call.",
-          "3. If multiple steps or dependencies are required, use skill_call.",
-          "",
-          "Output formats:",
-          "{\"type\":\"chat\",\"content\":\"answer text\"}",
-          "{\"type\":\"mcp_call\",\"tool\":\"tool_name\",\"params\":{}}",
-          "{\"type\":\"skill_call\",\"skill\":\"skill_id\",\"args\":{\"query\":\"...\",\"time\":\"...\"}}",
-          "",
-          "Constraints:",
-          "- Only choose tools listed under MCP tools.",
-          "- Only choose skills listed under Skills.",
-          "- Knowledge-base retrieval must use ragSearch or a skill that contains ragSearch.",
-          "- Prefer skill_call when the request needs tool output plus summarization or dependent parameter passing.",
-          "- Extract query and time from the latest user input when using skill_call.",
-          "",
-          `Skills:\n${skillList || "(none)"}`,
-          "",
-          `MCP tools:\n${mcpToolList || "(none)"}`,
-        ].join("\n"),
+        renderAgentPrompt({
+          skills: skillList,
+          mcpTools: mcpToolList,
+        }),
       ),
       new HumanMessage(
         `Latest user input: ${lastUser?.content ?? ""}\n\nAvailable file scope: ${JSON.stringify(
