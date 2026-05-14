@@ -24,6 +24,7 @@ RAG must be exposed as MCP through `ragSearch` with `topK = 5`. The Agent must r
 4. `004-agent-prompt-page`: Add an independent Agent prompt configuration page persisted in storage and used by the routing Agent.
 5. `005-execution-logs-page`: Add an independent logs page for chat, MCP calls, Skill runs, step inputs, outputs, errors, and timings.
 6. `006-rag-contract-hardening`: Verify `ragSearch` is the only knowledge retrieval path and enforce `topK = 5` defaults in API and Skill templates.
+7. `007-system-registry`: Add System registry, default personal system, `/api/systems`, `/systems`, and MCP tool `systemId` association.
 
 ## Verification Strategy
 

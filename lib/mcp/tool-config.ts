@@ -10,6 +10,7 @@ export interface McpToolRow {
   schema: Record<string, unknown>;
   enabled: boolean;
   handlerType: ToolHandlerType;
+  systemId: string;
   serverId: string | null;
   createdAt: number;
   updatedAt: number;
@@ -23,6 +24,7 @@ interface McpToolRowDb {
   schema: string;
   enabled: number;
   handler_type: ToolHandlerType;
+  system_id: string | null;
   server_id: string | null;
   created_at: number;
   updated_at: number;
@@ -35,6 +37,7 @@ export interface UpsertMcpToolInput {
   schema?: Record<string, unknown>;
   enabled?: boolean;
   handlerType?: ToolHandlerType;
+  systemId?: string;
   serverId?: string | null;
 }
 
@@ -47,6 +50,7 @@ function parse(row: McpToolRowDb): McpToolRow {
     schema: safeJson(row.schema, {}),
     enabled: !!row.enabled,
     handlerType: row.handler_type,
+    systemId: row.system_id || "default",
     serverId: row.server_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -85,8 +89,8 @@ export function createMcpTool(input: UpsertMcpToolInput): McpToolRow {
   db.prepare(
     `INSERT INTO mcp_tools (
        id, name, path_suffix, description, schema, enabled, handler_type,
-       server_id, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       system_id, server_id, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     cleanRequired(input.name, "name"),
@@ -95,6 +99,7 @@ export function createMcpTool(input: UpsertMcpToolInput): McpToolRow {
     JSON.stringify(input.schema ?? {}),
     input.enabled === false ? 0 : 1,
     input.handlerType ?? "rag-http",
+    cleanSystemId(input.systemId),
     input.serverId ?? null,
     t,
     t,
@@ -119,6 +124,8 @@ export function updateMcpTool(
     schema: patch.schema ?? current.schema,
     enabled: patch.enabled ?? current.enabled,
     handlerType: patch.handlerType ?? current.handlerType,
+    systemId:
+      patch.systemId === undefined ? current.systemId : cleanSystemId(patch.systemId),
     serverId: patch.serverId === undefined ? current.serverId : patch.serverId,
     updatedAt: now(),
   };
@@ -127,7 +134,7 @@ export function updateMcpTool(
     .prepare(
       `UPDATE mcp_tools SET
          name=?, path_suffix=?, description=?, schema=?, enabled=?,
-         handler_type=?, server_id=?, updated_at=?
+         handler_type=?, system_id=?, server_id=?, updated_at=?
        WHERE id=?`,
     )
     .run(
@@ -137,6 +144,7 @@ export function updateMcpTool(
       JSON.stringify(next.schema),
       next.enabled ? 1 : 0,
       next.handlerType,
+      next.systemId,
       next.serverId,
       next.updatedAt,
       id,
@@ -158,6 +166,12 @@ export function deleteMcpTool(id: string): void {
 function cleanRequired(value: string, name: string): string {
   const cleaned = value.trim();
   if (!cleaned) throw new Error(`${name} is required`);
+  return cleaned;
+}
+
+function cleanSystemId(value: string | undefined): string {
+  const cleaned = (value ?? "default").trim();
+  if (!cleaned) throw new Error("systemId is required");
   return cleaned;
 }
 

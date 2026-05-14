@@ -18,6 +18,7 @@ export interface UnifiedMcpToolDescriptor {
   schema: Record<string, unknown>;
   enabled: boolean;
   handlerType: ToolHandlerType;
+  systemId: string;
   serverId?: string;
   serverName?: string;
 }
@@ -47,6 +48,7 @@ export function listUnifiedMcpTools(): UnifiedMcpToolDescriptor[] {
         tool.enabled &&
         (tool.handlerType !== "rag-http" || !server || server.enabled),
       handlerType: tool.handlerType,
+      systemId: tool.systemId,
       serverId: tool.serverId ?? undefined,
       serverName: server?.name,
     };

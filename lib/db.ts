@@ -137,6 +137,24 @@ function migrate(db: Database.Database) {
       updated_at      INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS systems (
+      id                 TEXT PRIMARY KEY,
+      name               TEXT NOT NULL,
+      description        TEXT NOT NULL DEFAULT '',
+      mode               TEXT NOT NULL CHECK(mode IN ('enterprise','personal')),
+      enabled            INTEGER NOT NULL DEFAULT 1,
+      base_url           TEXT,
+      auth_mode          TEXT NOT NULL CHECK(auth_mode IN ('none','bearer','forwarded')) DEFAULT 'none',
+      prompt             TEXT NOT NULL DEFAULT '',
+      permission_mode    TEXT NOT NULL CHECK(permission_mode IN ('none','preflight','inline')),
+      permission_tool_id TEXT,
+      rate_limit         TEXT NOT NULL DEFAULT '{"enabled":false}',
+      audit_enabled      INTEGER NOT NULL DEFAULT 1,
+      created_at         INTEGER NOT NULL,
+      updated_at         INTEGER NOT NULL,
+      FOREIGN KEY(permission_tool_id) REFERENCES mcp_tools(id) ON DELETE SET NULL
+    );
+
     -- MCP 服务器配置
     -- kind: 'generic' (老的 stdio/sse 占位) | 'rag-http' (RuoYi AjaxResult 风格 HTTP 工具网关)
     CREATE TABLE IF NOT EXISTS mcp_servers (
@@ -160,9 +178,11 @@ function migrate(db: Database.Database) {
       schema        TEXT NOT NULL DEFAULT '{}',
       enabled       INTEGER NOT NULL DEFAULT 1,
       handler_type  TEXT NOT NULL CHECK(handler_type IN ('local','rag-http','llm')),
+      system_id     TEXT NOT NULL DEFAULT 'default',
       server_id     TEXT,
       created_at    INTEGER NOT NULL,
       updated_at    INTEGER NOT NULL,
+      FOREIGN KEY(system_id) REFERENCES systems(id) ON DELETE RESTRICT,
       FOREIGN KEY(server_id) REFERENCES mcp_servers(id) ON DELETE SET NULL
     );
     CREATE INDEX IF NOT EXISTS idx_mcp_tools_enabled ON mcp_tools(enabled);
@@ -196,8 +216,16 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, "mcp_servers", "kind", "TEXT NOT NULL DEFAULT 'generic'");
   addColumnIfMissing(db, "mcp_servers", "base_url", "TEXT");
   addColumnIfMissing(db, "mcp_servers", "auth_token", "TEXT");
+  addColumnIfMissing(db, "mcp_tools", "system_id", "TEXT NOT NULL DEFAULT 'default'");
   addColumnIfMissing(db, "skills", "version", "TEXT NOT NULL DEFAULT 'v1'");
   addColumnIfMissing(db, "skills", "steps", "TEXT NOT NULL DEFAULT '[]'");
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_mcp_tools_system ON mcp_tools(system_id);
+  `);
+  seedDefaultSystem(db);
+  db.prepare(
+    `UPDATE mcp_tools SET system_id = 'default' WHERE system_id IS NULL OR system_id = ''`,
+  ).run();
   db.exec(`
     CREATE TABLE IF NOT EXISTS skill_run_logs (
       id              TEXT PRIMARY KEY,
@@ -269,6 +297,32 @@ function seedDefaultRagMcpServer(db: Database.Database) {
   );
 }
 
+function seedDefaultSystem(db: Database.Database) {
+  const t = now();
+  db.prepare(
+    `INSERT OR IGNORE INTO systems (
+       id, name, description, mode, enabled, base_url, auth_mode, prompt,
+       permission_mode, permission_tool_id, rate_limit, audit_enabled,
+       created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "default",
+    "Default System",
+    "Personal default system for existing MCP tools.",
+    "personal",
+    1,
+    null,
+    "none",
+    "",
+    "none",
+    null,
+    JSON.stringify({ enabled: false }),
+    1,
+    t,
+    t,
+  );
+}
+
 function seedDefaultMcpTools(db: Database.Database) {
   const t = now();
   const ragServer = db
@@ -278,8 +332,8 @@ function seedDefaultMcpTools(db: Database.Database) {
   const insert = db.prepare(
     `INSERT OR IGNORE INTO mcp_tools (
        id, name, path_suffix, description, schema, enabled, handler_type,
-       server_id, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       system_id, server_id, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   insert.run(
@@ -290,6 +344,7 @@ function seedDefaultMcpTools(db: Database.Database) {
     JSON.stringify({ query: "string", topK: "number", fileIds: "string[]" }),
     1,
     "local",
+    "default",
     null,
     t,
     t,
@@ -307,6 +362,7 @@ function seedDefaultMcpTools(db: Database.Database) {
     }),
     1,
     "llm",
+    "default",
     null,
     t,
     t,
@@ -321,6 +377,7 @@ function seedDefaultMcpTools(db: Database.Database) {
       JSON.stringify({ type: "zod", source: "RAG_TOOLS", name: tool.name }),
       1,
       "rag-http",
+      "default",
       ragServer?.id ?? null,
       t,
       t,

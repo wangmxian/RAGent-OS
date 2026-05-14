@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
+  Building2,
   CheckCircle2,
   Database,
   Plug,
@@ -26,7 +27,15 @@ interface McpTool {
   schema: Record<string, unknown>;
   enabled: boolean;
   handlerType: HandlerType;
+  systemId: string;
   serverId: string | null;
+}
+
+interface SystemItem {
+  id: string;
+  name: string;
+  mode: "enterprise" | "personal";
+  enabled: boolean;
 }
 
 interface McpServer {
@@ -47,6 +56,7 @@ interface ToolDraft {
   schemaText: string;
   enabled: boolean;
   handlerType: HandlerType;
+  systemId: string;
   serverId: string;
 }
 
@@ -64,6 +74,7 @@ const EMPTY_TOOL: ToolDraft = {
   schemaText: "{\n  \"query\": \"string\"\n}",
   enabled: true,
   handlerType: "rag-http",
+  systemId: "default",
   serverId: "",
 };
 
@@ -75,6 +86,7 @@ const EMPTY_SERVER: ServerDraft = {
 
 export default function McpPage() {
   const [tools, setTools] = useState<McpTool[]>([]);
+  const [systems, setSystems] = useState<SystemItem[]>([]);
   const [servers, setServers] = useState<McpServer[]>([]);
   const [toolDraft, setToolDraft] = useState<ToolDraft>(EMPTY_TOOL);
   const [serverDraft, setServerDraft] = useState<ServerDraft>(EMPTY_SERVER);
@@ -83,14 +95,17 @@ export default function McpPage() {
 
   async function load() {
     setError(null);
-    const [toolRes, serverRes] = await Promise.all([
+    const [toolRes, serverRes, systemRes] = await Promise.all([
       fetch("/api/mcp-tools", { cache: "no-store" }),
       fetch("/api/mcp", { cache: "no-store" }),
+      fetch("/api/systems", { cache: "no-store" }),
     ]);
     const toolJson = await toolRes.json();
     const serverJson = await serverRes.json();
+    const systemJson = await systemRes.json();
     setTools(toolJson.tools || []);
     setServers(serverJson.servers || []);
+    setSystems(systemJson.systems || []);
   }
 
   useEffect(() => {
@@ -100,6 +115,10 @@ export default function McpPage() {
   const enabledToolCount = useMemo(
     () => tools.filter((tool) => tool.enabled).length,
     [tools],
+  );
+  const systemById = useMemo(
+    () => new Map(systems.map((system) => [system.id, system])),
+    [systems],
   );
 
   function editTool(tool: McpTool) {
@@ -111,6 +130,7 @@ export default function McpPage() {
       schemaText: JSON.stringify(tool.schema ?? {}, null, 2),
       enabled: tool.enabled,
       handlerType: tool.handlerType,
+      systemId: tool.systemId || "default",
       serverId: tool.serverId ?? "",
     });
   }
@@ -134,6 +154,7 @@ export default function McpPage() {
           schema,
           enabled: toolDraft.enabled,
           handlerType: toolDraft.handlerType,
+          systemId: toolDraft.systemId || "default",
           serverId: toolDraft.serverId || null,
         }),
       });
@@ -243,9 +264,9 @@ export default function McpPage() {
       </header>
 
       <div className="mx-auto grid max-w-7xl gap-4 px-4 py-5 lg:grid-cols-[420px_1fr]">
-        <section className="space-y-4">
+        <section className="space-y-4 ">
           <Panel title={toolDraft.id ? "编辑工具" : "新建工具"}>
-            <div className="space-y-3">
+            <div className="space-y-3 px-4 py-3">
               <Field label="工具名称">
                 <input
                   value={toolDraft.name}
@@ -265,6 +286,22 @@ export default function McpPage() {
                   className="input font-mono"
                   placeholder="cr241-afmt-ngfai-pareto"
                 />
+              </Field>
+              <Field label="归属 System">
+                <select
+                  value={toolDraft.systemId}
+                  onChange={(e) =>
+                    setToolDraft({ ...toolDraft, systemId: e.target.value })
+                  }
+                  className="input"
+                >
+                  {systems.map((system) => (
+                    <option key={system.id} value={system.id}>
+                      {system.name} ({system.id})
+                    </option>
+                  ))}
+                  {!systems.length && <option value="default">Default System</option>}
+                </select>
               </Field>
               <Field label="描述">
                 <textarea
@@ -359,7 +396,7 @@ export default function McpPage() {
           </Panel>
 
           <Panel title="MCP HTTP 连接">
-            <div className="space-y-3">
+            <div className="space-y-3 px-4 py-3">
               <Field label="连接名称">
                 <input
                   value={serverDraft.name}
@@ -413,7 +450,7 @@ export default function McpPage() {
         </section>
 
         <section className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-4">
             <Metric icon={<Wrench size={15} />} label="工具数" value={tools.length} />
             <Metric
               icon={<CheckCircle2 size={15} />}
@@ -424,6 +461,11 @@ export default function McpPage() {
               icon={<Database size={15} />}
               label="MCP 连接"
               value={servers.length}
+            />
+            <Metric
+              icon={<Building2 size={15} />}
+              label="Systems"
+              value={systems.length}
             />
           </div>
 
@@ -452,6 +494,9 @@ export default function McpPage() {
                       </span>
                       <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
                         {tool.handlerType}
+                      </span>
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                        {systemLabel(tool.systemId, systemById)}
                       </span>
                       <Status enabled={tool.enabled} />
                     </div>
@@ -568,4 +613,12 @@ function Status({ enabled }: { enabled: boolean }) {
       停用
     </span>
   );
+}
+
+function systemLabel(
+  systemId: string,
+  systems: Map<string, SystemItem>,
+): string {
+  const system = systems.get(systemId);
+  return system ? `System: ${system.name}` : `System: ${systemId || "default"}`;
 }
