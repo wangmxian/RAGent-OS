@@ -1,9 +1,13 @@
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { ChatVLLM } from "../chat-vllm";
 import { retrieve } from "../retrieval";
-import { listEnabledMcpServers, type McpServerRow } from "../mcp";
-import { callRagHttpTool } from "./http-client";
-import { RAG_TOOLS } from "./rag-tools";
+import {
+  getMcpServer,
+  listEnabledMcpServers,
+  type McpServerRow,
+} from "../mcp";
+import { callRagHttpPath } from "./http-client";
+import { getMcpToolByName, listEnabledMcpTools } from "./tool-config";
 
 export type ToolHandlerType = "local" | "rag-http" | "llm";
 
@@ -31,52 +35,22 @@ export interface ToolRuntimeContext {
   };
 }
 
-const LOCAL_TOOLS: UnifiedMcpToolDescriptor[] = [
-  {
-    name: "ragSearch",
-    pathSuffix: "rag-search",
-    description: "企业知识库检索，基于当前 Next.js 本地 sqlite-vec 向量库。",
-    schema: {
-      query: "string",
-      topK: "number",
-      fileIds: "string[]",
-    },
-    enabled: true,
-    handlerType: "local",
-  },
-  {
-    name: "llmSummary",
-    pathSuffix: "llm-summary",
-    description: "基于上游工具结果、知识库片段和用户问题生成最终回答。",
-    schema: {
-      question: "string",
-      context: "unknown",
-      data: "unknown",
-      knowledge: "unknown",
-    },
-    enabled: true,
-    handlerType: "llm",
-  },
-];
-
 export function listUnifiedMcpTools(): UnifiedMcpToolDescriptor[] {
-  const out = [...LOCAL_TOOLS];
-  for (const server of listEnabledMcpServers()) {
-    if (server.kind !== "rag-http") continue;
-    for (const tool of RAG_TOOLS) {
-      out.push({
-        name: tool.name,
-        pathSuffix: tool.pathSuffix,
-        description: `[MCP·${server.name}] ${tool.description}`,
-        schema: { type: "zod" },
-        enabled: server.enabled,
-        handlerType: "rag-http",
-        serverId: server.id,
-        serverName: server.name,
-      });
-    }
-  }
-  return out;
+  return listEnabledMcpTools().map((tool) => {
+    const server = tool.serverId ? getMcpServer(tool.serverId) : null;
+    return {
+      name: tool.name,
+      pathSuffix: tool.pathSuffix,
+      description: tool.description,
+      schema: tool.schema,
+      enabled:
+        tool.enabled &&
+        (tool.handlerType !== "rag-http" || !server || server.enabled),
+      handlerType: tool.handlerType,
+      serverId: tool.serverId ?? undefined,
+      serverName: server?.name,
+    };
+  });
 }
 
 export function findUnifiedMcpTool(
@@ -90,26 +64,38 @@ export async function callUnifiedMcpTool(
   params: Record<string, unknown>,
   runtime: ToolRuntimeContext = {},
 ): Promise<unknown> {
-  if (name === "ragSearch") return ragSearch(params, runtime);
-  if (name === "llmSummary") return llmSummary(params, runtime);
+  const tool = getMcpToolByName(name);
+  if (!tool || !tool.enabled) {
+    throw new Error(`Unknown MCP tool: ${name}`);
+  }
 
-  const server = findRagHttpServerForTool(name);
-  if (server) {
-    const result = await callRagHttpTool(server, name, params, {
+  if (tool.handlerType === "local" && name === "ragSearch") {
+    return ragSearch(params, runtime);
+  }
+  if (tool.handlerType === "llm" && name === "llmSummary") {
+    return llmSummary(params, runtime);
+  }
+
+  if (tool.handlerType === "rag-http") {
+    const server = findRagHttpServerForTool(tool.serverId);
+    if (!server) {
+      throw new Error(`No enabled MCP server configured for tool: ${name}`);
+    }
+    const result = await callRagHttpPath(server, name, tool.pathSuffix, params, {
       signal: runtime.signal,
     });
     return { result };
   }
 
-  throw new Error(`Unknown MCP tool: ${name}`);
+  throw new Error(`Unsupported MCP tool handler: ${tool.handlerType}`);
 }
 
-function findRagHttpServerForTool(toolName: string): McpServerRow | null {
-  if (!RAG_TOOLS.find((tool) => tool.name === toolName)) return null;
-  return (
-    listEnabledMcpServers().find((server) => server.kind === "rag-http") ??
-    null
-  );
+function findRagHttpServerForTool(serverId: string | null): McpServerRow | null {
+  if (serverId) {
+    const server = getMcpServer(serverId);
+    return server && server.enabled ? server : null;
+  }
+  return listEnabledMcpServers().find((server) => server.kind === "rag-http") ?? null;
 }
 
 async function ragSearch(
@@ -177,9 +163,9 @@ async function llmSummary(
   const res = await llm.invoke(
     [
       new SystemMessage(
-        "你是企业知识库和业务数据总结助手。只能依据给定材料回答；如果材料不足，直接说明缺少依据。用简洁中文回答。",
+        "You summarize enterprise knowledge-base and business data. Answer only from the provided material. If evidence is insufficient, say so. Use concise Chinese.",
       ),
-      new HumanMessage(`问题：${question}\n\n材料：\n${payload}`),
+      new HumanMessage(`Question: ${question}\n\nMaterial:\n${payload}`),
     ],
     { signal: runtime.signal },
   );
