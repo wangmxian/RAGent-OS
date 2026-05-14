@@ -8,7 +8,8 @@
     "start": "next start -p 3000",
     "lint": "next lint",
     "smoke": "tsx scripts/rag-smoke.ts",
-    "smoke:skill": "tsx scripts/skill-smoke.ts"
+    "smoke:skill": "tsx scripts/skill-smoke.ts",
+    "smoke:rag-contract": "tsx scripts/rag-contract-smoke.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.1.45",

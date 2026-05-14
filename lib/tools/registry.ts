@@ -1,6 +1,5 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { retrieve, hitsToContext } from "../retrieval";
 import {
   buildEnabledMcpTools,
   buildMcpTools,
@@ -15,12 +14,6 @@ export interface ToolDescriptor {
 }
 
 const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
-  {
-    id: "knowledge_search",
-    name: "知识库检索",
-    description: "在用户已上传的文件中按语义检索，返回最相关的片段。",
-    category: "rag",
-  },
   {
     id: "current_time",
     name: "当前时间",
@@ -47,7 +40,6 @@ export interface ToolContext {
 
 export function buildTools(ids: string[], ctx?: ToolContext) {
   const out = [];
-  if (ids.includes("knowledge_search")) out.push(makeKnowledgeSearch(ctx));
   if (ids.includes("current_time")) out.push(makeCurrentTime());
   if (ids.includes("calculator")) out.push(makeCalculator());
   out.push(...buildMcpTools(ids));
@@ -56,29 +48,6 @@ export function buildTools(ids: string[], ctx?: ToolContext) {
 
 export function buildDefaultMcpTools() {
   return buildEnabledMcpTools();
-}
-
-function makeKnowledgeSearch(ctx?: ToolContext) {
-  return tool(
-    async ({ query, k }) => {
-      const r = await retrieve(query, {
-        k: k ?? 5,
-        fileIds:
-          ctx?.fileIds && ctx.fileIds.length ? ctx.fileIds : undefined,
-      });
-      if (!r.hits.length) return "（未在知识库中找到相关片段）";
-      return hitsToContext(r.hits);
-    },
-    {
-      name: "knowledge_search",
-      description:
-        "在用户已上传的本地知识库中按语义搜索相关片段。问题需要参考用户文档时使用。",
-      schema: z.object({
-        query: z.string().describe("自然语言查询"),
-        k: z.number().int().min(1).max(20).optional().describe("返回条数"),
-      }),
-    },
-  );
 }
 
 function makeCurrentTime() {
