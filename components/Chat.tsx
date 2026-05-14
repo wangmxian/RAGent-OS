@@ -319,8 +319,8 @@ export default function Chat() {
             <Plug size={14} />
             MCP 配置
           </a>
-          <button
-            onClick={() => setShowSkills(true)}
+          <a
+            href="/skills"
             title="Skill 配置"
             className={`h-8 flex items-center gap-1.5 text-xs px-3 rounded-md border transition ${
               activeSkill
@@ -330,7 +330,7 @@ export default function Chat() {
           >
             <Sparkles size={14} />
             {activeSkill ? `${activeSkill.icon || ""} ${activeSkill.name}` : "Skill 配置"}
-          </button>
+          </a>
           <button
             onClick={() => setShowFiles(true)}
             title="文件/知识库"
