@@ -13,11 +13,17 @@ import {
 } from "@/lib/conversations";
 import { createSkillRunLog, getSkill, listSkills } from "@/lib/skills";
 import { executeSkill, type SkillExecutionResult } from "@/lib/skill-executor";
+import {
+  callUnifiedMcpTool,
+  listUnifiedMcpTools,
+  type UnifiedMcpToolDescriptor,
+} from "@/lib/mcp/dispatcher";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Role = "system" | "user" | "assistant";
+
 interface ChatMessage {
   role: Role;
   content: string;
@@ -28,19 +34,18 @@ interface ChatRequestBody {
   enableThinking?: boolean;
   temperature?: number;
   systemPrompt?: string;
-  /** Deprecated in strict skill mode. Knowledge QA must route through kb_qa. */
   useRetrieval?: boolean;
   useKnowledge?: boolean;
   fileIds?: string[];
   retrievalK?: number;
   conversationId?: string;
-  /** User-selected skill. If present, bypasses agent selection and executes it. */
   skillId?: string | null;
 }
 
 type AgentDecision =
-  | { type: "skill_call"; skill: string; args: Record<string, unknown> }
-  | { type: "chat" };
+  | { type: "chat"; content: string }
+  | { type: "mcp_call"; tool: string; params: Record<string, unknown> }
+  | { type: "skill_call"; skill: string; args: Record<string, unknown> };
 
 function toLcMessages(messages: ChatMessage[]): BaseMessage[] {
   return messages.map((m) => {
@@ -64,72 +69,10 @@ function messageText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
-      .map((c: any) => (typeof c === "string" ? c : c?.text ?? ""))
+      .map((item: any) => (typeof item === "string" ? item : item?.text ?? ""))
       .join("");
   }
   return "";
-}
-
-const OPEN_TAGS = ["<thinking>", "<think>"] as const;
-const CLOSE_TAGS = ["</thinking>", "</think>"] as const;
-const MAX_OPEN_LEN = Math.max(...OPEN_TAGS.map((t) => t.length));
-const MAX_CLOSE_LEN = Math.max(...CLOSE_TAGS.map((t) => t.length));
-
-function findFirst(
-  hay: string,
-  needles: readonly string[],
-): { idx: number; tag: string } | null {
-  let best: { idx: number; tag: string } | null = null;
-  for (const n of needles) {
-    const i = hay.indexOf(n);
-    if (i !== -1 && (best === null || i < best.idx)) {
-      best = { idx: i, tag: n };
-    }
-  }
-  return best;
-}
-
-class ThinkSplitter {
-  private buf = "";
-  private inThink = false;
-  push(text: string): { thinking: string; answer: string } {
-    this.buf += text;
-    let thinking = "";
-    let answer = "";
-    while (this.buf.length > 0) {
-      if (!this.inThink) {
-        const hit = findFirst(this.buf, OPEN_TAGS);
-        if (!hit) {
-          const safe = Math.max(0, this.buf.length - (MAX_OPEN_LEN - 1));
-          answer += this.buf.slice(0, safe);
-          this.buf = this.buf.slice(safe);
-          break;
-        }
-        answer += this.buf.slice(0, hit.idx);
-        this.buf = this.buf.slice(hit.idx + hit.tag.length);
-        this.inThink = true;
-      } else {
-        const hit = findFirst(this.buf, CLOSE_TAGS);
-        if (!hit) {
-          const safe = Math.max(0, this.buf.length - (MAX_CLOSE_LEN - 1));
-          thinking += this.buf.slice(0, safe);
-          this.buf = this.buf.slice(safe);
-          break;
-        }
-        thinking += this.buf.slice(0, hit.idx);
-        this.buf = this.buf.slice(hit.idx + hit.tag.length);
-        this.inThink = false;
-      }
-    }
-    return { thinking, answer };
-  }
-  flush(): { thinking: string; answer: string } {
-    const rest = this.buf;
-    this.buf = "";
-    return this.inThink
-      ? { thinking: rest, answer: "" }
-      : { thinking: "", answer: rest };
-  }
 }
 
 export async function POST(req: NextRequest) {
@@ -154,17 +97,6 @@ export async function POST(req: NextRequest) {
     body.enableThinking ?? selectedSkill?.enable_thinking ?? false;
   const temperature = body.temperature ?? selectedSkill?.default_temp ?? 0.7;
 
-  const llm = new ChatVLLM({
-    model,
-    apiKey,
-    temperature,
-    streaming: true,
-    configuration: { baseURL },
-    modelKwargs: {
-      chat_template_kwargs: { enable_thinking: enableThinking },
-    },
-  });
-
   const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
   if (conversationId && getConversation(conversationId) && lastUserMsg) {
     appendMessages(conversationId, [
@@ -176,75 +108,94 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const splitter = new ThinkSplitter();
-      let chunkIdx = 0;
-      let totalThinking = 0;
-      let totalAnswer = 0;
       let collectedAnswer = "";
       let collectedReasoning = "";
+      let chunkIdx = 0;
       let skillResult: SkillExecutionResult | null = null;
       let skillRunLogId: string | null = null;
-      let sources = [] as ReturnType<typeof sourcesFromSkillResult>;
+      let sources = [] as SourceHit[];
 
-      controller.enqueue(
-        sseEvent(encoder, "start", { model, enableThinking, ts: Date.now() }),
-      );
-
-      const emitAnswer = (text: string) => {
-        const { thinking, answer } = splitter.push(text);
-        if (thinking) {
-          totalThinking += thinking.length;
-          collectedReasoning += thinking;
-          controller.enqueue(sseEvent(encoder, "thinking", { delta: thinking }));
-        }
-        if (answer) {
-          totalAnswer += answer.length;
-          collectedAnswer += answer;
-          controller.enqueue(sseEvent(encoder, "delta", { delta: answer }));
-        }
+      const emit = (event: string, data: unknown) => {
+        controller.enqueue(sseEvent(encoder, event, data));
+      };
+      const emitAnswer = (delta: string) => {
+        if (!delta) return;
+        collectedAnswer += delta;
+        emit("delta", { delta });
       };
 
-      const streamAnswer = async (inputMessages: BaseMessage[]) => {
-        const iter = await llm.stream(inputMessages, { signal: req.signal });
-        for await (const chunk of iter) {
-          chunkIdx++;
-          const reasoningDelta: string =
-            ((chunk.additional_kwargs as any)?.reasoning_content as string) ??
-            "";
-          const contentDelta = messageText(chunk.content);
-          if (reasoningDelta) {
-            totalThinking += reasoningDelta.length;
-            collectedReasoning += reasoningDelta;
-            controller.enqueue(
-              sseEvent(encoder, "thinking", { delta: reasoningDelta }),
-            );
-          }
-          if (contentDelta) emitAnswer(contentDelta);
-        }
-      };
+      emit("start", { model, enableThinking, ts: Date.now() });
 
       try {
-        const decision = selectedSkill
+        const decision: AgentDecision = selectedSkill
           ? {
-              type: "skill_call" as const,
+              type: "skill_call",
               skill: selectedSkill.id,
               args: buildDefaultArgs(messages, fileIds),
             }
-          : await decideSkill(messages, {
+          : await decideExecution(messages, {
               baseURL,
               apiKey,
               model,
               signal: req.signal,
               fileIds,
+              knowledgeEnabled,
             });
 
-        controller.enqueue(sseEvent(encoder, "decision", decision));
+        emit("decision", decision);
 
-        if (decision.type === "skill_call") {
-          const skill = getSkill(decision.skill);
-          if (!skill) {
-            throw new Error(`Skill not found: ${decision.skill}`);
+        if (decision.type === "chat") {
+          if (decision.content) {
+            emitAnswer(decision.content);
+          } else {
+            const streamed = await streamDirectChat(messages, {
+              baseURL,
+              apiKey,
+              model,
+              temperature,
+              enableThinking,
+              systemPrompt: body.systemPrompt,
+              signal: req.signal,
+              onThinking(delta) {
+                collectedReasoning += delta;
+                emit("thinking", { delta });
+              },
+              onAnswer(delta) {
+                chunkIdx++;
+                emitAnswer(delta);
+              },
+            });
+            chunkIdx = streamed.chunks;
           }
+        } else if (decision.type === "mcp_call") {
+          const startedAt = Date.now();
+          const params = normalizeMcpParams(decision.tool, decision.params, fileIds);
+          const output = await callUnifiedMcpTool(decision.tool, params, {
+            fileIds,
+            knowledgeEnabled,
+            signal: req.signal,
+            llm: {
+              baseURL,
+              apiKey,
+              model,
+              temperature,
+              enableThinking,
+            },
+          });
+          emit("tool", {
+            step: 1,
+            name: decision.tool,
+            ok: true,
+            preview: JSON.stringify(output ?? null).slice(0, 500),
+            durationMs: Date.now() - startedAt,
+          });
+          sources = sourcesFromMcpResult(output);
+          if (sources.length) emit("sources", { hits: sources });
+          emitAnswer(finalAnswerFromMcpResult(output));
+        } else {
+          const skill = getSkill(decision.skill);
+          if (!skill) throw new Error(`Skill not found: ${decision.skill}`);
+
           const args = {
             ...buildDefaultArgs(messages, fileIds),
             ...(decision.args ?? {}),
@@ -261,26 +212,24 @@ export async function POST(req: NextRequest) {
               enableThinking: skill.enable_thinking,
             },
           });
+
           for (const step of skillResult.steps) {
-            controller.enqueue(
-              sseEvent(encoder, "tool", {
-                step: step.step,
-                name: step.tool,
-                ok: step.ok,
-                preview: JSON.stringify(step.output ?? step.error).slice(0, 500),
-                durationMs: step.durationMs,
-              }),
-            );
+            emit("tool", {
+              step: step.step,
+              name: step.tool,
+              ok: step.ok,
+              preview: JSON.stringify(step.output ?? step.error).slice(0, 500),
+              durationMs: step.durationMs,
+            });
           }
           sources = sourcesFromSkillResult(skillResult);
-          if (sources.length) {
-            controller.enqueue(sseEvent(encoder, "sources", { hits: sources }));
-          }
-          if (!skillResult.ok) {
-            emitAnswer(`执行技能 ${skill.name} 失败：${skillResult.error}`);
-          } else {
-            emitAnswer(finalAnswerFromSkillResult(skillResult));
-          }
+          if (sources.length) emit("sources", { hits: sources });
+          emitAnswer(
+            skillResult.ok
+              ? finalAnswerFromSkillResult(skillResult)
+              : `Skill execution failed: ${skillResult.error}`,
+          );
+
           skillRunLogId = createSkillRunLog({
             conversationId,
             skill: skill.id,
@@ -290,26 +239,6 @@ export async function POST(req: NextRequest) {
             error: skillResult.error,
             durationMs: skillResult.durationMs,
           });
-        } else {
-          const finalSystem = [
-            body.systemPrompt || "你是一个有帮助的 AI 助手，使用简洁、准确的中文回答。",
-            "严格规则：你不能直接调用 MCP 或任何工具。企业数据、知识库、考勤、NGFAI 等需要真实数据的问题，应由 Agent 选择 Skill；如果当前没有选择 Skill，就不要编造数据。",
-          ]
-            .filter(Boolean)
-            .join("\n\n");
-          await streamAnswer([new SystemMessage(finalSystem), ...toLcMessages(messages)]);
-        }
-
-        const tail = splitter.flush();
-        if (tail.thinking) {
-          totalThinking += tail.thinking.length;
-          collectedReasoning += tail.thinking;
-          controller.enqueue(sseEvent(encoder, "thinking", { delta: tail.thinking }));
-        }
-        if (tail.answer) {
-          totalAnswer += tail.answer.length;
-          collectedAnswer += tail.answer;
-          controller.enqueue(sseEvent(encoder, "delta", { delta: tail.answer }));
         }
 
         if (
@@ -342,22 +271,16 @@ export async function POST(req: NextRequest) {
           ]);
         }
 
-        controller.enqueue(
-          sseEvent(encoder, "done", {
-            ok: true,
-            chunks: chunkIdx,
-            thinkingChars: totalThinking,
-            answerChars: totalAnswer,
-            skillRunLogId,
-          }),
-        );
+        emit("done", {
+          ok: true,
+          chunks: chunkIdx,
+          thinkingChars: collectedReasoning.length,
+          answerChars: collectedAnswer.length,
+          skillRunLogId,
+        });
       } catch (err: any) {
         console.error("[chat] error", err);
-        controller.enqueue(
-          sseEvent(encoder, "error", {
-            message: err?.message || String(err),
-          }),
-        );
+        emit("error", { message: err?.message || String(err) });
       } finally {
         controller.close();
       }
@@ -374,7 +297,7 @@ export async function POST(req: NextRequest) {
   });
 }
 
-async function decideSkill(
+async function decideExecution(
   messages: ChatMessage[],
   opts: {
     baseURL: string;
@@ -386,6 +309,7 @@ async function decideSkill(
   },
 ): Promise<AgentDecision> {
   const skills = listSkills().filter((skill) => skill.steps.length > 0);
+  const mcpTools = listUnifiedMcpTools().filter((tool) => tool.enabled);
   const llm = new ChatVLLM({
     model: opts.model,
     apiKey: opts.apiKey,
@@ -396,44 +320,57 @@ async function decideSkill(
       chat_template_kwargs: { enable_thinking: false },
     },
   });
+
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const skillList = skills
-    .map((skill) =>
-      JSON.stringify({
-        id: skill.id,
-        name: skill.name,
-        description: skill.description,
-        version: skill.version,
-        steps: skill.steps.map((step) => step.tool),
-      }),
-    )
-    .join("\n");
+  const skillList = skills.map(skillForPrompt).join("\n");
+  const mcpToolList = mcpTools.map(toolForPrompt).join("\n");
+
   const res = await llm.invoke(
     [
       new SystemMessage(
         [
-          "你是企业智能助手的调度 Agent。你的唯一职责是从 Skill 列表中选择一个 Skill，或返回普通聊天。",
-          "禁止调用工具。禁止解释。必须只输出严格 JSON。",
-          "输出格式一：{\"type\":\"skill_call\",\"skill\":\"skill_id\",\"args\":{\"query\":\"...\",\"time\":\"...\"}}",
-          "输出格式二：{\"type\":\"chat\"}",
-          "企业知识库/文档/制度/资料问答优先选择 kb_qa。",
-          "NGFAI、CR241、柏拉图、考勤、到岗等企业数据问题必须选择最匹配的 Skill。",
-          "尽量从用户输入中提取 query 和 time；没有时间时 time 可为空字符串。",
-          `Skill 列表：\n${skillList}`,
+          "You are the routing Agent for an enterprise AI scheduler.",
+          "Return strict JSON only. Do not use markdown. Do not explain the decision.",
+          "",
+          "Decision rules:",
+          "1. If the question can be answered directly, use chat.",
+          "2. If exactly one MCP tool is sufficient, use mcp_call.",
+          "3. If multiple steps or dependencies are required, use skill_call.",
+          "",
+          "Output formats:",
+          "{\"type\":\"chat\",\"content\":\"answer text\"}",
+          "{\"type\":\"mcp_call\",\"tool\":\"tool_name\",\"params\":{}}",
+          "{\"type\":\"skill_call\",\"skill\":\"skill_id\",\"args\":{\"query\":\"...\",\"time\":\"...\"}}",
+          "",
+          "Constraints:",
+          "- Only choose tools listed under MCP tools.",
+          "- Only choose skills listed under Skills.",
+          "- Knowledge-base retrieval must use ragSearch or a skill that contains ragSearch.",
+          "- Prefer skill_call when the request needs tool output plus summarization or dependent parameter passing.",
+          "- Extract query and time from the latest user input when using skill_call.",
+          "",
+          `Skills:\n${skillList || "(none)"}`,
+          "",
+          `MCP tools:\n${mcpToolList || "(none)"}`,
         ].join("\n"),
       ),
       new HumanMessage(
-        `用户最新输入：${lastUser?.content ?? ""}\n\n可选文件范围：${JSON.stringify(
+        `Latest user input: ${lastUser?.content ?? ""}\n\nAvailable file scope: ${JSON.stringify(
           opts.knowledgeEnabled === false ? [] : opts.fileIds ?? [],
         )}`,
       ),
     ],
     { signal: opts.signal },
   );
-  return parseDecision(messageText(res.content));
+
+  return parseDecision(messageText(res.content), mcpTools, skills.map((s) => s.id));
 }
 
-function parseDecision(raw: string): AgentDecision {
+function parseDecision(
+  raw: string,
+  mcpTools: UnifiedMcpToolDescriptor[],
+  skillIds: string[],
+): AgentDecision {
   const cleaned = raw
     .trim()
     .replace(/^```json\s*/i, "")
@@ -443,26 +380,102 @@ function parseDecision(raw: string): AgentDecision {
   try {
     const parsed = JSON.parse(cleaned);
     if (parsed?.type === "skill_call" && typeof parsed.skill === "string") {
+      if (!skillIds.includes(parsed.skill)) {
+        return { type: "chat", content: "No matching skill is configured." };
+      }
       return {
         type: "skill_call",
         skill: parsed.skill,
-        args:
-          parsed.args && typeof parsed.args === "object" && !Array.isArray(parsed.args)
-            ? parsed.args
-            : {},
+        args: plainObject(parsed.args),
       };
     }
-    if (parsed?.type === "chat") return { type: "chat" };
+    if (parsed?.type === "mcp_call" && typeof parsed.tool === "string") {
+      if (!mcpTools.some((tool) => tool.name === parsed.tool)) {
+        return { type: "chat", content: "No matching MCP tool is configured." };
+      }
+      return {
+        type: "mcp_call",
+        tool: parsed.tool,
+        params: plainObject(parsed.params),
+      };
+    }
+    if (parsed?.type === "chat") {
+      return {
+        type: "chat",
+        content: typeof parsed.content === "string" ? parsed.content : "",
+      };
+    }
   } catch {}
-  return { type: "chat" };
+  return { type: "chat", content: raw.trim() };
+}
+
+async function streamDirectChat(
+  messages: ChatMessage[],
+  opts: {
+    baseURL: string;
+    apiKey: string;
+    model: string;
+    temperature: number;
+    enableThinking: boolean;
+    systemPrompt?: string;
+    signal: AbortSignal;
+    onThinking: (delta: string) => void;
+    onAnswer: (delta: string) => void;
+  },
+): Promise<{ chunks: number }> {
+  const llm = new ChatVLLM({
+    model: opts.model,
+    apiKey: opts.apiKey,
+    temperature: opts.temperature,
+    streaming: true,
+    configuration: { baseURL: opts.baseURL },
+    modelKwargs: {
+      chat_template_kwargs: { enable_thinking: opts.enableThinking },
+    },
+  });
+  const finalSystem =
+    opts.systemPrompt ||
+    "Answer directly. Do not call tools. Use concise Chinese when the user writes Chinese.";
+  const iter = await llm.stream(
+    [new SystemMessage(finalSystem), ...toLcMessages(messages)],
+    { signal: opts.signal },
+  );
+  let chunks = 0;
+  for await (const chunk of iter) {
+    chunks++;
+    const reasoningDelta =
+      ((chunk.additional_kwargs as any)?.reasoning_content as string) ?? "";
+    const contentDelta = messageText(chunk.content);
+    if (reasoningDelta) opts.onThinking(reasoningDelta);
+    if (contentDelta) opts.onAnswer(contentDelta);
+  }
+  return { chunks };
 }
 
 function buildDefaultArgs(
   messages: ChatMessage[],
   fileIds?: string[],
 ): Record<string, unknown> {
-  const query = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  const query =
+    [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
   return { query, time: query, fileIds: fileIds ?? [] };
+}
+
+function normalizeMcpParams(
+  tool: string,
+  params: Record<string, unknown>,
+  fileIds?: string[],
+): Record<string, unknown> {
+  if (tool !== "ragSearch") return params;
+  return {
+    ...params,
+    query: typeof params.query === "string" ? params.query : "",
+    topK: typeof params.topK === "number" ? params.topK : 5,
+    fileIds:
+      Array.isArray(params.fileIds) && params.fileIds.length
+        ? params.fileIds
+        : fileIds ?? [],
+  };
 }
 
 function finalAnswerFromSkillResult(result: SkillExecutionResult): string {
@@ -475,30 +488,78 @@ function finalAnswerFromSkillResult(result: SkillExecutionResult): string {
   return JSON.stringify(last, null, 2);
 }
 
-function sourcesFromSkillResult(result: SkillExecutionResult) {
-  const out: Array<{
-    chunk_id: string;
-    file_id: string;
-    file_name: string;
-    ord: number;
-    modality: "text" | "image";
-    distance: number;
-    preview: string;
-  }> = [];
+function finalAnswerFromMcpResult(result: unknown): string {
+  if (result && typeof result === "object") {
+    const value = result as any;
+    if (typeof value.answer === "string") return value.answer;
+    if (typeof value.result === "string") return value.result;
+  }
+  if (typeof result === "string") return result;
+  return JSON.stringify(result, null, 2);
+}
+
+interface SourceHit {
+  chunk_id: string;
+  file_id: string;
+  file_name: string;
+  ord: number;
+  modality: "text" | "image";
+  distance: number;
+  preview: string;
+}
+
+function sourcesFromSkillResult(result: SkillExecutionResult): SourceHit[] {
+  const out: SourceHit[] = [];
   for (const step of result.steps) {
-    const chunks = (step.output as any)?.chunks;
-    if (!Array.isArray(chunks)) continue;
-    for (const chunk of chunks) {
-      out.push({
+    out.push(...sourcesFromChunks((step.output as any)?.chunks));
+  }
+  return out;
+}
+
+function sourcesFromMcpResult(result: unknown): SourceHit[] {
+  return sourcesFromChunks((result as any)?.chunks);
+}
+
+function sourcesFromChunks(chunks: unknown): SourceHit[] {
+  if (!Array.isArray(chunks)) return [];
+  return chunks
+    .map((chunk: any): SourceHit => {
+      const modality: SourceHit["modality"] =
+        chunk.modality === "image" ? "image" : "text";
+      return {
         chunk_id: String(chunk.chunkId ?? ""),
         file_id: String(chunk.fileId ?? ""),
         file_name: String(chunk.fileName ?? ""),
         ord: Number(chunk.ord ?? 0),
-        modality: chunk.modality === "image" ? "image" : "text",
+        modality,
         distance: Number(chunk.distance ?? 0),
         preview: String(chunk.content ?? "").slice(0, 200),
-      });
-    }
-  }
-  return out.filter((source) => source.chunk_id);
+      };
+    })
+    .filter((source) => source.chunk_id);
+}
+
+function plainObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function skillForPrompt(skill: ReturnType<typeof listSkills>[number]): string {
+  return JSON.stringify({
+    id: skill.id,
+    name: skill.name,
+    description: skill.description,
+    version: skill.version,
+    steps: skill.steps.map((step) => step.tool),
+  });
+}
+
+function toolForPrompt(tool: UnifiedMcpToolDescriptor): string {
+  return JSON.stringify({
+    name: tool.name,
+    pathSuffix: tool.pathSuffix,
+    description: tool.description,
+    schema: tool.schema,
+  });
 }
