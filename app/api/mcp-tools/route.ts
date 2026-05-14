@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
       schema: parseSchema(body.schema),
       enabled: body.enabled,
       handlerType: body.handlerType ?? body.handler_type,
+      systemId: body.systemId ?? body.system_id,
       serverId: body.serverId ?? body.server_id ?? null,
     });
     return NextResponse.json({ tool });
@@ -57,6 +58,7 @@ export async function PATCH(req: NextRequest) {
       schema: body.schema === undefined ? undefined : parseSchema(body.schema),
       enabled: body.enabled,
       handlerType: body.handlerType ?? body.handler_type,
+      systemId: body.systemId ?? body.system_id,
       serverId: body.serverId ?? body.server_id,
     });
     if (!tool) {
