@@ -15,7 +15,6 @@ import Message, { type Role, type SourceHit } from "./Message";
 import FilesPanel from "./FilesPanel";
 import ConversationsSidebar from "./ConversationsSidebar";
 import SkillsPanel, { type SkillItem } from "./SkillsPanel";
-import McpPanel from "./McpPanel";
 
 interface Msg {
   role: Role;
@@ -34,7 +33,6 @@ export default function Chat() {
   const [showSettings, setShowSettings] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
-  const [showMcp, setShowMcp] = useState(false);
   const [temperature, setTemperature] = useState(0.7);
   const [useKnowledge, setUseKnowledge] = useState(true);
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
@@ -313,21 +311,13 @@ export default function Chat() {
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={() => setShowMcp(true)}
+          <a
+            href="/mcp"
             title="MCP 配置"
             className="h-8 flex items-center gap-1.5 text-xs px-3 rounded-md border bg-white border-slate-200 text-slate-600 hover:text-slate-950 hover:bg-slate-50"
           >
             <Plug size={14} />
             MCP 配置
-          </button>
-          <a
-            href="/mcp"
-            title="MCP 管理页"
-            className="h-8 hidden sm:flex items-center gap-1.5 text-xs px-3 rounded-md border bg-white border-slate-200 text-slate-600 hover:text-slate-950 hover:bg-slate-50"
-          >
-            <Plug size={14} />
-            MCP 管理页
           </a>
           <button
             onClick={() => setShowSkills(true)}
@@ -480,7 +470,6 @@ export default function Chat() {
         onActiveChange={setActiveSkillId}
       />
 
-      <McpPanel open={showMcp} onClose={() => setShowMcp(false)} />
       </div>
     </div>
   );
