@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listUnifiedMcpTools } from "@/lib/mcp/dispatcher";
 import { callToolGateway } from "@/lib/tool-gateway";
+import { resolveIdentityContext } from "@/lib/identity-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,13 +29,23 @@ export async function POST(
   }
 
   try {
+    const requestId = `mcp-route-${Date.now()}`;
+    const identity = resolveIdentityContext({
+      headers: req.headers,
+      requestId,
+      source: "api",
+      mode: "personal",
+      systemId: tool.systemId,
+    });
     const response = await callToolGateway(
       {
         toolName: tool.name,
         params: body,
+        userContext: identity.userContext,
+        policyContext: identity.policyContext,
         executionContext: {
           mode: "mcp_call",
-          requestId: `mcp-route-${Date.now()}`,
+          requestId,
         },
       },
       { signal: req.signal },

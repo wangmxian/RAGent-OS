@@ -1,6 +1,12 @@
 import { callUnifiedMcpTool, type ToolRuntimeContext } from "./mcp/dispatcher";
 import { getMcpToolByName } from "./mcp/tool-config";
 import { getSystem } from "./systems";
+import {
+  summarizeIdentity,
+  type PlannerIdentitySummary,
+  type PolicyContext,
+  type UserContext,
+} from "./identity-context";
 
 export type ToolGatewayErrorType =
   | "PermissionDenied"
@@ -14,13 +20,8 @@ export type ToolGatewayErrorType =
 export interface ToolGatewayRequest {
   toolName: string;
   params: Record<string, unknown>;
-  userContext?: {
-    userId?: string;
-    tenantId?: string;
-    sessionUserId?: string;
-    accessToken?: string;
-    headers?: Record<string, string>;
-  };
+  userContext?: UserContext;
+  policyContext?: PolicyContext;
   executionContext: {
     mode: "mcp_call" | "skill_call";
     skillId?: string;
@@ -37,6 +38,7 @@ export interface ToolGatewayMetadata {
   permissionAllowed?: boolean;
   fallbackUsed: boolean;
   durationMs: number;
+  identity?: PlannerIdentitySummary;
 }
 
 export type ToolGatewayResponse =
@@ -72,7 +74,7 @@ export async function callToolGateway(
       startedAt,
       systemId: "unknown",
       toolId: request.toolName,
-    });
+    }, request);
   }
 
   const baseMeta = {
@@ -83,10 +85,10 @@ export async function callToolGateway(
 
   const system = getSystem(tool.systemId);
   if (!system || !system.enabled) {
-    return failure("SystemDisabled", `System disabled: ${tool.systemId}`, baseMeta);
+    return failure("SystemDisabled", `System disabled: ${tool.systemId}`, baseMeta, request);
   }
   if (!tool.enabled) {
-    return failure("ToolNotFound", `MCP tool disabled: ${tool.name}`, baseMeta);
+    return failure("ToolNotFound", `MCP tool disabled: ${tool.name}`, baseMeta, request);
   }
 
   try {
@@ -94,13 +96,14 @@ export async function callToolGateway(
     return {
       ok: true,
       result,
-      gateway: metadata(baseMeta),
+      gateway: metadata(baseMeta, request),
     };
   } catch (e: any) {
     return failure(
       "ToolFailed",
       e?.message || String(e),
       baseMeta,
+      request,
     );
   }
 }
@@ -118,11 +121,12 @@ function failure(
   type: ToolGatewayErrorType,
   message: string,
   base: { startedAt: number; systemId: string; toolId: string },
+  request?: ToolGatewayRequest,
 ): ToolGatewayResponse & { ok: false } {
   return {
     ok: false,
     error: { type, message },
-    gateway: metadata(base),
+    gateway: metadata(base, request),
   };
 }
 
@@ -130,12 +134,14 @@ function metadata(base: {
   startedAt: number;
   systemId: string;
   toolId: string;
-}): ToolGatewayMetadata {
+}, request?: ToolGatewayRequest): ToolGatewayMetadata {
+  const mode = request?.userContext?.source === "personal" ? "personal" : "enterprise";
   return {
     systemId: base.systemId,
     toolId: base.toolId,
     permissionChecked: false,
     fallbackUsed: false,
     durationMs: Date.now() - base.startedAt,
+    identity: request ? summarizeIdentity(request.userContext, mode) : undefined,
   };
 }
