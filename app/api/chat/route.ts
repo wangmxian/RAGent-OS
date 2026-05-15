@@ -20,6 +20,7 @@ import {
 import { renderAgentPrompt } from "@/lib/agent-prompt";
 import { createExecutionLog } from "@/lib/execution-logs";
 import { callToolGateway } from "@/lib/tool-gateway";
+import { resolveIdentityContext } from "@/lib/identity-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -147,6 +148,14 @@ export async function POST(req: NextRequest) {
 
         emit("decision", decision);
         const requestId = `${conversationId ?? "chat"}-${executionStartedAt}`;
+        const identity = resolveIdentityContext({
+          headers: req.headers,
+          requestId,
+          conversationId,
+          source: "chat",
+          mode: "personal",
+          skillId: decision.type === "skill_call" ? decision.skill : undefined,
+        });
 
         if (decision.type === "chat") {
           if (decision.content) {
@@ -188,6 +197,8 @@ export async function POST(req: NextRequest) {
             {
               toolName: decision.tool,
               params,
+              userContext: identity.userContext,
+              policyContext: identity.policyContext,
               executionContext: {
                 mode: "mcp_call",
                 conversationId,
@@ -264,6 +275,8 @@ export async function POST(req: NextRequest) {
           };
           skillResult = await executeSkill(skill, args, {
             requestId,
+            userContext: identity.userContext,
+            policyContext: identity.policyContext,
             fileIds,
             knowledgeEnabled,
             signal: req.signal,

@@ -9,6 +9,8 @@ import {
 import { callRagHttpPath } from "./http-client";
 import { getMcpToolByName, listEnabledMcpTools } from "./tool-config";
 
+import type { PolicyContext, UserContext } from "../identity-context";
+
 export type ToolHandlerType = "local" | "rag-http" | "llm";
 
 export interface UnifiedMcpToolDescriptor {
@@ -25,6 +27,8 @@ export interface UnifiedMcpToolDescriptor {
 
 export interface ToolRuntimeContext {
   requestId?: string;
+  userContext?: UserContext;
+  policyContext?: PolicyContext;
   fileIds?: string[];
   knowledgeEnabled?: boolean;
   signal?: AbortSignal;

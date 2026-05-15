@@ -56,6 +56,8 @@ export async function executeSkill(
         {
           toolName: step.tool,
           params: resolved,
+          userContext: runtime.userContext,
+          policyContext: runtime.policyContext,
           executionContext: {
             mode: "skill_call",
             skillId: skill.id,
