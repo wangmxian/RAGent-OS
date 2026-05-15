@@ -1,5 +1,10 @@
 import type { SkillRow } from "./skills";
-import { callUnifiedMcpTool, type ToolRuntimeContext } from "./mcp/dispatcher";
+import type { ToolRuntimeContext } from "./mcp/dispatcher";
+import {
+  callToolGateway,
+  type ToolGatewayMetadata,
+  type ToolGatewayResponse,
+} from "./tool-gateway";
 
 export interface SkillStepLog {
   step: number;
@@ -9,6 +14,7 @@ export interface SkillStepLog {
   ok: boolean;
   error: string | null;
   durationMs: number;
+  gateway?: ToolGatewayMetadata;
 }
 
 export interface SkillExecutionResult {
@@ -46,7 +52,21 @@ export async function executeSkill(
     let resolved: Record<string, unknown>;
     try {
       resolved = resolveParams(step.params, context) as Record<string, unknown>;
-      const output = await callUnifiedMcpTool(step.tool, resolved, runtime);
+      const response = await callToolGateway(
+        {
+          toolName: step.tool,
+          params: resolved,
+          executionContext: {
+            mode: "skill_call",
+            skillId: skill.id,
+            stepIndex: stepNo,
+            requestId: runtime.requestId ?? `${skill.id}-${startedAt}`,
+          },
+        },
+        runtime,
+      );
+      if (!response.ok) throwGatewayFailure(response);
+      const output = response.result;
       context.steps[`step${stepNo}`] = output;
       logs.push({
         step: stepNo,
@@ -56,9 +76,11 @@ export async function executeSkill(
         ok: true,
         error: null,
         durationMs: Date.now() - stepStartedAt,
+        gateway: response.gateway,
       });
     } catch (e: any) {
       const error = e?.message || String(e);
+      const gateway = e?.gateway as ToolGatewayMetadata | undefined;
       logs.push({
         step: stepNo,
         tool: step.tool,
@@ -67,6 +89,7 @@ export async function executeSkill(
         ok: false,
         error,
         durationMs: Date.now() - stepStartedAt,
+        gateway,
       });
       return {
         skill: skill.id,
@@ -89,6 +112,14 @@ export async function executeSkill(
     error: null,
     durationMs: Date.now() - startedAt,
   };
+}
+
+function throwGatewayFailure(response: ToolGatewayResponse & { ok: false }): never {
+  const err = new Error(`${response.error.type}: ${response.error.message}`) as Error & {
+    gateway?: ToolGatewayMetadata;
+  };
+  err.gateway = response.gateway;
+  throw err;
 }
 
 export function resolveParams(value: unknown, context: ResolveContext): unknown {

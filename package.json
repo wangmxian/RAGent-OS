@@ -10,7 +10,8 @@
     "smoke": "tsx scripts/rag-smoke.ts",
     "smoke:skill": "tsx scripts/skill-smoke.ts",
     "smoke:rag-contract": "tsx scripts/rag-contract-smoke.ts",
-    "smoke:systems": "tsx scripts/system-registry-smoke.ts"
+    "smoke:systems": "tsx scripts/system-registry-smoke.ts",
+    "smoke:gateway": "tsx scripts/tool-gateway-smoke.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.1.45",

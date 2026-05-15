@@ -14,12 +14,12 @@ import {
 import { createSkillRunLog, getSkill, listSkills } from "@/lib/skills";
 import { executeSkill, type SkillExecutionResult } from "@/lib/skill-executor";
 import {
-  callUnifiedMcpTool,
   listUnifiedMcpTools,
   type UnifiedMcpToolDescriptor,
 } from "@/lib/mcp/dispatcher";
 import { renderAgentPrompt } from "@/lib/agent-prompt";
 import { createExecutionLog } from "@/lib/execution-logs";
+import { callToolGateway } from "@/lib/tool-gateway";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -146,6 +146,7 @@ export async function POST(req: NextRequest) {
             });
 
         emit("decision", decision);
+        const requestId = `${conversationId ?? "chat"}-${executionStartedAt}`;
 
         if (decision.type === "chat") {
           if (decision.content) {
@@ -183,24 +184,62 @@ export async function POST(req: NextRequest) {
         } else if (decision.type === "mcp_call") {
           const startedAt = Date.now();
           const params = normalizeMcpParams(decision.tool, decision.params, fileIds);
-          const output = await callUnifiedMcpTool(decision.tool, params, {
-            fileIds,
-            knowledgeEnabled,
-            signal: req.signal,
-            llm: {
-              baseURL,
-              apiKey,
-              model,
-              temperature,
-              enableThinking,
+          const gatewayResponse = await callToolGateway(
+            {
+              toolName: decision.tool,
+              params,
+              executionContext: {
+                mode: "mcp_call",
+                conversationId,
+                requestId,
+              },
             },
-          });
+            {
+              requestId,
+              fileIds,
+              knowledgeEnabled,
+              signal: req.signal,
+              llm: {
+                baseURL,
+                apiKey,
+                model,
+                temperature,
+                enableThinking,
+              },
+            },
+          );
+          if (!gatewayResponse.ok) {
+            emit("tool", {
+              step: 1,
+              name: decision.tool,
+              ok: false,
+              preview: gatewayResponse.error.message,
+              durationMs: gatewayResponse.gateway.durationMs,
+              gateway: gatewayResponse.gateway,
+            });
+            createExecutionLog({
+              conversationId,
+              mode: "mcp_call",
+              target: decision.tool,
+              input: params,
+              decision,
+              output: gatewayResponse,
+              ok: false,
+              error: `${gatewayResponse.error.type}: ${gatewayResponse.error.message}`,
+              durationMs: Date.now() - executionStartedAt,
+            });
+            throw new Error(
+              `${gatewayResponse.error.type}: ${gatewayResponse.error.message}`,
+            );
+          }
+          const output = gatewayResponse.result;
           emit("tool", {
             step: 1,
             name: decision.tool,
             ok: true,
             preview: JSON.stringify(output ?? null).slice(0, 500),
             durationMs: Date.now() - startedAt,
+            gateway: gatewayResponse.gateway,
           });
           sources = sourcesFromMcpResult(output);
           if (sources.length) emit("sources", { hits: sources });
@@ -211,7 +250,7 @@ export async function POST(req: NextRequest) {
             target: decision.tool,
             input: params,
             decision,
-            output,
+            output: { result: output, gateway: gatewayResponse.gateway },
             ok: true,
             durationMs: Date.now() - executionStartedAt,
           });
@@ -224,6 +263,7 @@ export async function POST(req: NextRequest) {
             ...(decision.args ?? {}),
           };
           skillResult = await executeSkill(skill, args, {
+            requestId,
             fileIds,
             knowledgeEnabled,
             signal: req.signal,
