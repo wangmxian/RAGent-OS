@@ -27,6 +27,7 @@ RAG must be exposed as MCP through `ragSearch` with `topK = 5`. The Agent must r
 7. `007-system-registry`: Add System registry, default personal system, `/api/systems`, `/systems`, and MCP tool `systemId` association.
 8. `008-tool-gateway-core`: Add Tool Gateway as the only MCP execution entry for direct MCP calls, public MCP route calls, and Skill steps.
 9. `008a-identity-policy-context`: Add identity context normalization for personal mode, trusted upstream headers, and forwarded token context.
+10. `009-permission-preflight`: Add fail-closed Tool Gateway permission preflight using external system permission tools.
 
 ## Verification Strategy
 

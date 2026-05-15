@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
       enabled: body.enabled,
       handlerType: body.handlerType ?? body.handler_type,
       systemId: body.systemId ?? body.system_id,
+      permissionMode: body.permissionMode ?? body.permission_mode,
       serverId: body.serverId ?? body.server_id ?? null,
     });
     return NextResponse.json({ tool });
@@ -59,6 +60,7 @@ export async function PATCH(req: NextRequest) {
       enabled: body.enabled,
       handlerType: body.handlerType ?? body.handler_type,
       systemId: body.systemId ?? body.system_id,
+      permissionMode: body.permissionMode ?? body.permission_mode,
       serverId: body.serverId ?? body.server_id,
     });
     if (!tool) {

@@ -18,6 +18,7 @@ import {
 type HandlerType = "local" | "rag-http" | "llm";
 type McpKind = "generic" | "rag-http";
 type McpTransport = "stdio" | "http" | "sse";
+type PermissionMode = "inherit" | "none" | "preflight" | "inline";
 
 interface McpTool {
   id: string;
@@ -28,6 +29,7 @@ interface McpTool {
   enabled: boolean;
   handlerType: HandlerType;
   systemId: string;
+  permissionMode: PermissionMode;
   serverId: string | null;
 }
 
@@ -57,6 +59,7 @@ interface ToolDraft {
   enabled: boolean;
   handlerType: HandlerType;
   systemId: string;
+  permissionMode: PermissionMode;
   serverId: string;
 }
 
@@ -75,6 +78,7 @@ const EMPTY_TOOL: ToolDraft = {
   enabled: true,
   handlerType: "rag-http",
   systemId: "default",
+  permissionMode: "inherit",
   serverId: "",
 };
 
@@ -131,6 +135,7 @@ export default function McpPage() {
       enabled: tool.enabled,
       handlerType: tool.handlerType,
       systemId: tool.systemId || "default",
+      permissionMode: tool.permissionMode || "inherit",
       serverId: tool.serverId ?? "",
     });
   }
@@ -155,6 +160,7 @@ export default function McpPage() {
           enabled: toolDraft.enabled,
           handlerType: toolDraft.handlerType,
           systemId: toolDraft.systemId || "default",
+          permissionMode: toolDraft.permissionMode,
           serverId: toolDraft.serverId || null,
         }),
       });
@@ -348,6 +354,23 @@ export default function McpPage() {
                   </select>
                 </Field>
               </div>
+              <Field label="权限模式">
+                <select
+                  value={toolDraft.permissionMode}
+                  onChange={(e) =>
+                    setToolDraft({
+                      ...toolDraft,
+                      permissionMode: e.target.value as PermissionMode,
+                    })
+                  }
+                  className="input"
+                >
+                  <option value="inherit">inherit</option>
+                  <option value="none">none</option>
+                  <option value="preflight">preflight</option>
+                  <option value="inline">inline</option>
+                </select>
+              </Field>
               <Field label="参数 Schema JSON">
                 <textarea
                   value={toolDraft.schemaText}
@@ -497,6 +520,9 @@ export default function McpPage() {
                       </span>
                       <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
                         {systemLabel(tool.systemId, systemById)}
+                      </span>
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                        permission: {tool.permissionMode || "inherit"}
                       </span>
                       <Status enabled={tool.enabled} />
                     </div>
