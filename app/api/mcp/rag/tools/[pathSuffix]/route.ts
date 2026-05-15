@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  callUnifiedMcpTool,
-  listUnifiedMcpTools,
-} from "@/lib/mcp/dispatcher";
+import { listUnifiedMcpTools } from "@/lib/mcp/dispatcher";
+import { callToolGateway } from "@/lib/tool-gateway";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,10 +28,21 @@ export async function POST(
   }
 
   try {
-    const result = await callUnifiedMcpTool(tool.name, body, {
-      signal: req.signal,
-    });
-    return NextResponse.json({ tool: tool.name, result });
+    const response = await callToolGateway(
+      {
+        toolName: tool.name,
+        params: body,
+        executionContext: {
+          mode: "mcp_call",
+          requestId: `mcp-route-${Date.now()}`,
+        },
+      },
+      { signal: req.signal },
+    );
+    if (!response.ok) {
+      return NextResponse.json(response, { status: 502 });
+    }
+    return NextResponse.json({ tool: tool.name, result: response.result, gateway: response.gateway });
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message || String(e) },

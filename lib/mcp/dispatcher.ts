@@ -24,6 +24,7 @@ export interface UnifiedMcpToolDescriptor {
 }
 
 export interface ToolRuntimeContext {
+  requestId?: string;
   fileIds?: string[];
   knowledgeEnabled?: boolean;
   signal?: AbortSignal;
