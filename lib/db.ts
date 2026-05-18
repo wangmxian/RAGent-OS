@@ -179,6 +179,7 @@ function migrate(db: Database.Database) {
       enabled       INTEGER NOT NULL DEFAULT 1,
       handler_type  TEXT NOT NULL CHECK(handler_type IN ('local','rag-http','llm')),
       system_id     TEXT NOT NULL DEFAULT 'default',
+      permission_mode TEXT NOT NULL CHECK(permission_mode IN ('inherit','none','preflight','inline')) DEFAULT 'inherit',
       server_id     TEXT,
       created_at    INTEGER NOT NULL,
       updated_at    INTEGER NOT NULL,
@@ -217,6 +218,12 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, "mcp_servers", "base_url", "TEXT");
   addColumnIfMissing(db, "mcp_servers", "auth_token", "TEXT");
   addColumnIfMissing(db, "mcp_tools", "system_id", "TEXT NOT NULL DEFAULT 'default'");
+  addColumnIfMissing(
+    db,
+    "mcp_tools",
+    "permission_mode",
+    "TEXT NOT NULL DEFAULT 'inherit'",
+  );
   addColumnIfMissing(db, "skills", "version", "TEXT NOT NULL DEFAULT 'v1'");
   addColumnIfMissing(db, "skills", "steps", "TEXT NOT NULL DEFAULT '[]'");
   db.exec(`

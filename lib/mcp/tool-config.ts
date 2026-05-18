@@ -2,6 +2,8 @@ import { nanoid } from "nanoid";
 import { getDb, now } from "../db";
 import type { ToolHandlerType } from "./dispatcher";
 
+export type ToolPermissionMode = "inherit" | "none" | "preflight" | "inline";
+
 export interface McpToolRow {
   id: string;
   name: string;
@@ -11,6 +13,7 @@ export interface McpToolRow {
   enabled: boolean;
   handlerType: ToolHandlerType;
   systemId: string;
+  permissionMode: ToolPermissionMode;
   serverId: string | null;
   createdAt: number;
   updatedAt: number;
@@ -25,6 +28,7 @@ interface McpToolRowDb {
   enabled: number;
   handler_type: ToolHandlerType;
   system_id: string | null;
+  permission_mode: ToolPermissionMode | null;
   server_id: string | null;
   created_at: number;
   updated_at: number;
@@ -38,6 +42,7 @@ export interface UpsertMcpToolInput {
   enabled?: boolean;
   handlerType?: ToolHandlerType;
   systemId?: string;
+  permissionMode?: ToolPermissionMode;
   serverId?: string | null;
 }
 
@@ -51,6 +56,7 @@ function parse(row: McpToolRowDb): McpToolRow {
     enabled: !!row.enabled,
     handlerType: row.handler_type,
     systemId: row.system_id || "default",
+    permissionMode: normalizePermissionMode(row.permission_mode ?? "inherit"),
     serverId: row.server_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -89,8 +95,8 @@ export function createMcpTool(input: UpsertMcpToolInput): McpToolRow {
   db.prepare(
     `INSERT INTO mcp_tools (
        id, name, path_suffix, description, schema, enabled, handler_type,
-       system_id, server_id, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       system_id, permission_mode, server_id, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     cleanRequired(input.name, "name"),
@@ -100,6 +106,7 @@ export function createMcpTool(input: UpsertMcpToolInput): McpToolRow {
     input.enabled === false ? 0 : 1,
     input.handlerType ?? "rag-http",
     cleanSystemId(input.systemId),
+    normalizePermissionMode(input.permissionMode ?? "inherit"),
     input.serverId ?? null,
     t,
     t,
@@ -126,6 +133,10 @@ export function updateMcpTool(
     handlerType: patch.handlerType ?? current.handlerType,
     systemId:
       patch.systemId === undefined ? current.systemId : cleanSystemId(patch.systemId),
+    permissionMode:
+      patch.permissionMode === undefined
+        ? current.permissionMode
+        : normalizePermissionMode(patch.permissionMode),
     serverId: patch.serverId === undefined ? current.serverId : patch.serverId,
     updatedAt: now(),
   };
@@ -134,7 +145,7 @@ export function updateMcpTool(
     .prepare(
       `UPDATE mcp_tools SET
          name=?, path_suffix=?, description=?, schema=?, enabled=?,
-         handler_type=?, system_id=?, server_id=?, updated_at=?
+         handler_type=?, system_id=?, permission_mode=?, server_id=?, updated_at=?
        WHERE id=?`,
     )
     .run(
@@ -145,11 +156,24 @@ export function updateMcpTool(
       next.enabled ? 1 : 0,
       next.handlerType,
       next.systemId,
+      next.permissionMode,
       next.serverId,
       next.updatedAt,
       id,
     );
   return getMcpTool(id);
+}
+
+function normalizePermissionMode(value: string): ToolPermissionMode {
+  if (
+    value === "inherit" ||
+    value === "none" ||
+    value === "preflight" ||
+    value === "inline"
+  ) {
+    return value;
+  }
+  throw new Error("permissionMode must be inherit, none, preflight, or inline");
 }
 
 export function getMcpTool(id: string): McpToolRow | null {

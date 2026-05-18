@@ -21,6 +21,7 @@ export interface UnifiedMcpToolDescriptor {
   enabled: boolean;
   handlerType: ToolHandlerType;
   systemId: string;
+  permissionMode: string;
   serverId?: string;
   serverName?: string;
 }
@@ -54,6 +55,7 @@ export function listUnifiedMcpTools(): UnifiedMcpToolDescriptor[] {
         (tool.handlerType !== "rag-http" || !server || server.enabled),
       handlerType: tool.handlerType,
       systemId: tool.systemId,
+      permissionMode: tool.permissionMode,
       serverId: tool.serverId ?? undefined,
       serverName: server?.name,
     };
