@@ -211,6 +211,33 @@ function migrate(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_execution_logs_created_at
       ON execution_logs(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS gateway_audit_logs (
+      id                 TEXT PRIMARY KEY,
+      request_id         TEXT NOT NULL,
+      conversation_id    TEXT,
+      system_id          TEXT NOT NULL,
+      tool_id            TEXT NOT NULL,
+      tool_name          TEXT NOT NULL,
+      user_id            TEXT,
+      tenant_id          TEXT,
+      session_user_id    TEXT,
+      identity           TEXT NOT NULL,
+      params_preview     TEXT NOT NULL,
+      result_preview     TEXT NOT NULL,
+      permission_checked INTEGER NOT NULL,
+      permission_allowed INTEGER,
+      fallback_used      INTEGER NOT NULL,
+      ok                 INTEGER NOT NULL,
+      error_type         TEXT,
+      error_message      TEXT,
+      duration_ms        INTEGER NOT NULL,
+      created_at         INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_gateway_audit_logs_created_at
+      ON gateway_audit_logs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_gateway_audit_logs_request
+      ON gateway_audit_logs(request_id);
   `);
 
   // 后续新增字段：旧库幂等迁移

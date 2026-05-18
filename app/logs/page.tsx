@@ -18,8 +18,32 @@ interface ExecutionLog {
   createdAt: number;
 }
 
+interface GatewayAuditLog {
+  id: string;
+  requestId: string;
+  conversationId: string | null;
+  systemId: string;
+  toolId: string;
+  toolName: string;
+  userId: string | null;
+  tenantId: string | null;
+  sessionUserId: string | null;
+  identity: unknown;
+  paramsPreview: unknown;
+  resultPreview: unknown;
+  permissionChecked: boolean;
+  permissionAllowed: boolean | null;
+  fallbackUsed: boolean;
+  ok: boolean;
+  errorType: string | null;
+  errorMessage: string | null;
+  durationMs: number;
+  createdAt: number;
+}
+
 export default function LogsPage() {
   const [logs, setLogs] = useState<ExecutionLog[]>([]);
+  const [gatewayLogs, setGatewayLogs] = useState<GatewayAuditLog[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -28,6 +52,7 @@ export default function LogsPage() {
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || "加载日志失败");
     setLogs(json.logs || []);
+    setGatewayLogs(json.gatewayLogs || []);
   }
 
   useEffect(() => {
@@ -123,6 +148,95 @@ export default function LogsPage() {
             ))}
           </div>
         </section>
+
+        <section className="mt-5 rounded-md border border-slate-200 bg-white">
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <div>
+              <h2 className="text-sm font-semibold">Gateway 审计</h2>
+              <p className="text-xs text-slate-500">
+                Tool Gateway 调用、权限结果和脱敏后的参数/结果预览
+              </p>
+            </div>
+            <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">
+              {gatewayLogs.length}
+            </span>
+          </div>
+          <div className="grid grid-cols-[160px_160px_1fr_120px_100px] border-b border-slate-200 px-4 py-2 text-xs font-medium text-slate-500">
+            <div>时间</div>
+            <div>System / Tool</div>
+            <div>Request</div>
+            <div>权限</div>
+            <div className="text-right">结果</div>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {gatewayLogs.length === 0 && (
+              <div className="px-4 py-10 text-center text-sm text-slate-500">
+                暂无 Gateway 审计日志
+              </div>
+            )}
+            {gatewayLogs.map((log) => (
+              <details key={log.id} className="group">
+                <summary className="grid cursor-pointer grid-cols-[160px_160px_1fr_120px_100px] items-center gap-3 px-4 py-3 hover:bg-slate-50">
+                  <div className="text-xs text-slate-500">
+                    {new Date(log.createdAt).toLocaleString()}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate font-mono text-xs text-slate-600">
+                      {log.systemId}
+                    </div>
+                    <div className="truncate text-sm font-medium">
+                      {log.toolName}
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate font-mono text-xs text-slate-500">
+                      {log.requestId}
+                    </div>
+                    <div className="truncate text-xs text-slate-500">
+                      {log.userId || log.sessionUserId || "-"}
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-600">
+                    {permissionLabel(log)}
+                  </div>
+                  <div className="flex items-center justify-end gap-2 text-xs">
+                    {log.ok ? (
+                      <CheckCircle2 size={14} className="text-emerald-600" />
+                    ) : (
+                      <XCircle size={14} className="text-red-600" />
+                    )}
+                    <span className="text-slate-500">{log.durationMs}ms</span>
+                  </div>
+                </summary>
+                <div className="grid gap-3 bg-slate-50 px-4 py-3 md:grid-cols-4">
+                  <JsonPanel title="Identity" value={log.identity} />
+                  <JsonPanel title="Params" value={log.paramsPreview} />
+                  <JsonPanel
+                    title={log.ok ? "Result" : "Error"}
+                    value={
+                      log.ok
+                        ? log.resultPreview
+                        : {
+                            type: log.errorType,
+                            message: log.errorMessage,
+                          }
+                    }
+                  />
+                  <JsonPanel
+                    title="Gateway"
+                    value={{
+                      systemId: log.systemId,
+                      toolId: log.toolId,
+                      permissionChecked: log.permissionChecked,
+                      permissionAllowed: log.permissionAllowed,
+                      fallbackUsed: log.fallbackUsed,
+                    }}
+                  />
+                </div>
+              </details>
+            ))}
+          </div>
+        </section>
       </div>
     </main>
   );
@@ -143,4 +257,11 @@ function JsonPanel({ title, value }: { title: string; value: unknown }) {
 
 function preview(value: unknown): string {
   return JSON.stringify(value ?? null).slice(0, 180);
+}
+
+function permissionLabel(log: GatewayAuditLog): string {
+  if (!log.permissionChecked) return "未检查";
+  if (log.permissionAllowed === true) return "允许";
+  if (log.permissionAllowed === false) return "拒绝";
+  return "已检查";
 }
