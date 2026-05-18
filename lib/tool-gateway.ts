@@ -1,6 +1,7 @@
 import { callUnifiedMcpTool, type ToolRuntimeContext } from "./mcp/dispatcher";
 import { getMcpTool, getMcpToolByName, type McpToolRow } from "./mcp/tool-config";
 import { getSystem, type SystemPermissionMode, type SystemRow } from "./systems";
+import { createGatewayAuditLog } from "./gateway-audit";
 import {
   summarizeIdentity,
   type PlannerIdentitySummary,
@@ -70,11 +71,13 @@ export async function callToolGateway(
   const startedAt = Date.now();
   const tool = getMcpToolByName(request.toolName);
   if (!tool) {
-    return failure("ToolNotFound", `MCP tool not found: ${request.toolName}`, {
+    const response = failure("ToolNotFound", `MCP tool not found: ${request.toolName}`, {
       startedAt,
       systemId: "unknown",
       toolId: request.toolName,
     }, request);
+    auditGatewayCall(request, response, request.toolName, true);
+    return response;
   }
 
   const baseMeta = {
@@ -85,15 +88,19 @@ export async function callToolGateway(
 
   const system = getSystem(tool.systemId);
   if (!system || !system.enabled) {
-    return failure("SystemDisabled", `System disabled: ${tool.systemId}`, baseMeta, request);
+    const response = failure("SystemDisabled", `System disabled: ${tool.systemId}`, baseMeta, request);
+    auditGatewayCall(request, response, tool.name, true);
+    return response;
   }
   if (!tool.enabled) {
-    return failure("ToolNotFound", `MCP tool disabled: ${tool.name}`, baseMeta, request);
+    const response = failure("ToolNotFound", `MCP tool disabled: ${tool.name}`, baseMeta, request);
+    auditGatewayCall(request, response, tool.name, system.auditEnabled);
+    return response;
   }
 
   const permission = await checkPermission(system, tool, request, runtime, baseMeta);
   if (!permission.allowed) {
-    return failure(
+    const response = failure(
       "PermissionDenied",
       permission.message,
       baseMeta,
@@ -101,17 +108,21 @@ export async function callToolGateway(
       permission.checked,
       false,
     );
+    auditGatewayCall(request, response, tool.name, system.auditEnabled);
+    return response;
   }
 
   try {
     const result = await callUnifiedMcpTool(tool.name, request.params, runtime);
-    return {
+    const response: ToolGatewayResponse = {
       ok: true,
       result,
       gateway: metadata(baseMeta, request, permission.checked, permission.allowed),
     };
+    auditGatewayCall(request, response, tool.name, system.auditEnabled);
+    return response;
   } catch (e: any) {
-    return failure(
+    const response = failure(
       "ToolFailed",
       e?.message || String(e),
       baseMeta,
@@ -119,6 +130,8 @@ export async function callToolGateway(
       permission.checked,
       permission.allowed,
     );
+    auditGatewayCall(request, response, tool.name, system.auditEnabled);
+    return response;
   }
 }
 
@@ -161,6 +174,41 @@ function metadata(base: {
     durationMs: Date.now() - base.startedAt,
     identity: request ? summarizeIdentity(request.userContext, mode) : undefined,
   };
+}
+
+function auditGatewayCall(
+  request: ToolGatewayRequest,
+  response: ToolGatewayResponse,
+  toolName: string,
+  auditEnabled: boolean,
+) {
+  if (!auditEnabled) return;
+  try {
+    createGatewayAuditLog({
+      requestId:
+        request.policyContext?.requestId || request.executionContext.requestId,
+      conversationId:
+        request.policyContext?.conversationId ??
+        request.executionContext.conversationId ??
+        null,
+      systemId: response.gateway.systemId,
+      toolId: response.gateway.toolId,
+      toolName,
+      userContext: request.userContext,
+      identity: response.gateway.identity,
+      params: request.params,
+      result: response.ok ? response.result : null,
+      permissionChecked: response.gateway.permissionChecked,
+      permissionAllowed: response.gateway.permissionAllowed,
+      fallbackUsed: response.gateway.fallbackUsed,
+      ok: response.ok,
+      errorType: response.ok ? null : response.error.type,
+      errorMessage: response.ok ? null : response.error.message,
+      durationMs: response.gateway.durationMs,
+    });
+  } catch (e) {
+    console.error("[tool-gateway] audit log failed", e);
+  }
 }
 
 async function checkPermission(
