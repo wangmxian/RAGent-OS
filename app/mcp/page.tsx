@@ -30,6 +30,11 @@ interface McpTool {
   handlerType: HandlerType;
   systemId: string;
   permissionMode: PermissionMode;
+  rateLimit: {
+    enabled: boolean;
+    perMinute?: number;
+    perHour?: number;
+  };
   serverId: string | null;
 }
 
@@ -60,6 +65,9 @@ interface ToolDraft {
   handlerType: HandlerType;
   systemId: string;
   permissionMode: PermissionMode;
+  rateLimitEnabled: boolean;
+  perMinute: string;
+  perHour: string;
   serverId: string;
 }
 
@@ -79,6 +87,9 @@ const EMPTY_TOOL: ToolDraft = {
   handlerType: "rag-http",
   systemId: "default",
   permissionMode: "inherit",
+  rateLimitEnabled: false,
+  perMinute: "",
+  perHour: "",
   serverId: "",
 };
 
@@ -136,6 +147,9 @@ export default function McpPage() {
       handlerType: tool.handlerType,
       systemId: tool.systemId || "default",
       permissionMode: tool.permissionMode || "inherit",
+      rateLimitEnabled: !!tool.rateLimit?.enabled,
+      perMinute: tool.rateLimit?.perMinute?.toString() ?? "",
+      perHour: tool.rateLimit?.perHour?.toString() ?? "",
       serverId: tool.serverId ?? "",
     });
   }
@@ -161,6 +175,11 @@ export default function McpPage() {
           handlerType: toolDraft.handlerType,
           systemId: toolDraft.systemId || "default",
           permissionMode: toolDraft.permissionMode,
+          rateLimit: {
+            enabled: toolDraft.rateLimitEnabled,
+            perMinute: toolDraft.perMinute ? Number(toolDraft.perMinute) : undefined,
+            perHour: toolDraft.perHour ? Number(toolDraft.perHour) : undefined,
+          },
           serverId: toolDraft.serverId || null,
         }),
       });
@@ -371,6 +390,49 @@ export default function McpPage() {
                   <option value="inline">inline</option>
                 </select>
               </Field>
+              <div className="rounded-md border border-slate-200 p-3">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    className="accent-slate-950"
+                    checked={toolDraft.rateLimitEnabled}
+                    onChange={(e) =>
+                      setToolDraft({
+                        ...toolDraft,
+                        rateLimitEnabled: e.target.checked,
+                      })
+                    }
+                  />
+                  启用工具限流
+                </label>
+                {toolDraft.rateLimitEnabled && (
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <Field label="每分钟">
+                      <input
+                        value={toolDraft.perMinute}
+                        onChange={(e) =>
+                          setToolDraft({
+                            ...toolDraft,
+                            perMinute: e.target.value,
+                          })
+                        }
+                        className="input"
+                        inputMode="numeric"
+                      />
+                    </Field>
+                    <Field label="每小时">
+                      <input
+                        value={toolDraft.perHour}
+                        onChange={(e) =>
+                          setToolDraft({ ...toolDraft, perHour: e.target.value })
+                        }
+                        className="input"
+                        inputMode="numeric"
+                      />
+                    </Field>
+                  </div>
+                )}
+              </div>
               <Field label="参数 Schema JSON">
                 <textarea
                   value={toolDraft.schemaText}
@@ -524,6 +586,11 @@ export default function McpPage() {
                       <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
                         permission: {tool.permissionMode || "inherit"}
                       </span>
+                      {tool.rateLimit?.enabled && (
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                          rate: {rateLimitLabel(tool.rateLimit)}
+                        </span>
+                      )}
                       <Status enabled={tool.enabled} />
                     </div>
                     <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
@@ -647,4 +714,11 @@ function systemLabel(
 ): string {
   const system = systems.get(systemId);
   return system ? `System: ${system.name}` : `System: ${systemId || "default"}`;
+}
+
+function rateLimitLabel(rateLimit: McpTool["rateLimit"]): string {
+  const parts = [];
+  if (rateLimit.perMinute) parts.push(`${rateLimit.perMinute}/min`);
+  if (rateLimit.perHour) parts.push(`${rateLimit.perHour}/hour`);
+  return parts.length ? parts.join(", ") : "enabled";
 }

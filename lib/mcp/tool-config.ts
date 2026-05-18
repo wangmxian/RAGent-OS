@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import { getDb, now } from "../db";
+import type { SystemRateLimit } from "../systems";
 import type { ToolHandlerType } from "./dispatcher";
 
 export type ToolPermissionMode = "inherit" | "none" | "preflight" | "inline";
@@ -14,6 +15,7 @@ export interface McpToolRow {
   handlerType: ToolHandlerType;
   systemId: string;
   permissionMode: ToolPermissionMode;
+  rateLimit: SystemRateLimit;
   serverId: string | null;
   createdAt: number;
   updatedAt: number;
@@ -29,6 +31,7 @@ interface McpToolRowDb {
   handler_type: ToolHandlerType;
   system_id: string | null;
   permission_mode: ToolPermissionMode | null;
+  rate_limit: string | null;
   server_id: string | null;
   created_at: number;
   updated_at: number;
@@ -43,6 +46,7 @@ export interface UpsertMcpToolInput {
   handlerType?: ToolHandlerType;
   systemId?: string;
   permissionMode?: ToolPermissionMode;
+  rateLimit?: SystemRateLimit;
   serverId?: string | null;
 }
 
@@ -57,6 +61,7 @@ function parse(row: McpToolRowDb): McpToolRow {
     handlerType: row.handler_type,
     systemId: row.system_id || "default",
     permissionMode: normalizePermissionMode(row.permission_mode ?? "inherit"),
+    rateLimit: safeRateLimit(row.rate_limit),
     serverId: row.server_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -95,8 +100,8 @@ export function createMcpTool(input: UpsertMcpToolInput): McpToolRow {
   db.prepare(
     `INSERT INTO mcp_tools (
        id, name, path_suffix, description, schema, enabled, handler_type,
-       system_id, permission_mode, server_id, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       system_id, permission_mode, rate_limit, server_id, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     cleanRequired(input.name, "name"),
@@ -107,6 +112,7 @@ export function createMcpTool(input: UpsertMcpToolInput): McpToolRow {
     input.handlerType ?? "rag-http",
     cleanSystemId(input.systemId),
     normalizePermissionMode(input.permissionMode ?? "inherit"),
+    JSON.stringify(normalizeRateLimit(input.rateLimit)),
     input.serverId ?? null,
     t,
     t,
@@ -137,6 +143,7 @@ export function updateMcpTool(
       patch.permissionMode === undefined
         ? current.permissionMode
         : normalizePermissionMode(patch.permissionMode),
+    rateLimit: normalizeRateLimit(patch.rateLimit ?? current.rateLimit),
     serverId: patch.serverId === undefined ? current.serverId : patch.serverId,
     updatedAt: now(),
   };
@@ -145,7 +152,8 @@ export function updateMcpTool(
     .prepare(
       `UPDATE mcp_tools SET
          name=?, path_suffix=?, description=?, schema=?, enabled=?,
-         handler_type=?, system_id=?, permission_mode=?, server_id=?, updated_at=?
+         handler_type=?, system_id=?, permission_mode=?, rate_limit=?,
+         server_id=?, updated_at=?
        WHERE id=?`,
     )
     .run(
@@ -157,6 +165,7 @@ export function updateMcpTool(
       next.handlerType,
       next.systemId,
       next.permissionMode,
+      JSON.stringify(next.rateLimit),
       next.serverId,
       next.updatedAt,
       id,
@@ -174,6 +183,34 @@ function normalizePermissionMode(value: string): ToolPermissionMode {
     return value;
   }
   throw new Error("permissionMode must be inherit, none, preflight, or inline");
+}
+
+function normalizeRateLimit(value: SystemRateLimit | undefined): SystemRateLimit {
+  if (!value || !value.enabled) return { enabled: false };
+  return {
+    enabled: true,
+    perMinute: normalizePositiveInt(value.perMinute),
+    perHour: normalizePositiveInt(value.perHour),
+  };
+}
+
+function normalizePositiveInt(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const normalized = Math.trunc(value);
+  return normalized > 0 ? normalized : undefined;
+}
+
+function safeRateLimit(value: string | null): SystemRateLimit {
+  if (!value) return { enabled: false };
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { enabled: false };
+    }
+    return normalizeRateLimit(parsed as SystemRateLimit);
+  } catch {
+    return { enabled: false };
+  }
 }
 
 export function getMcpTool(id: string): McpToolRow | null {

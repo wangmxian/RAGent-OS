@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
       handlerType: body.handlerType ?? body.handler_type,
       systemId: body.systemId ?? body.system_id,
       permissionMode: body.permissionMode ?? body.permission_mode,
+      rateLimit: parseRateLimit(body.rateLimit ?? body.rate_limit),
       serverId: body.serverId ?? body.server_id ?? null,
     });
     return NextResponse.json({ tool });
@@ -61,6 +62,10 @@ export async function PATCH(req: NextRequest) {
       handlerType: body.handlerType ?? body.handler_type,
       systemId: body.systemId ?? body.system_id,
       permissionMode: body.permissionMode ?? body.permission_mode,
+      rateLimit:
+        body.rateLimit === undefined && body.rate_limit === undefined
+          ? undefined
+          : parseRateLimit(body.rateLimit ?? body.rate_limit),
       serverId: body.serverId ?? body.server_id,
     });
     if (!tool) {
@@ -97,4 +102,23 @@ function parseSchema(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
   }
   throw new Error("schema must be a JSON object");
+}
+
+function parseRateLimit(value: unknown) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { enabled: false };
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    enabled: !!raw.enabled,
+    perMinute: numberOrUndefined(raw.perMinute ?? raw.per_minute),
+    perHour: numberOrUndefined(raw.perHour ?? raw.per_hour),
+  };
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  if (value === "" || value == null) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }

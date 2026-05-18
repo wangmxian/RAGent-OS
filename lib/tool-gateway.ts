@@ -2,6 +2,7 @@ import { callUnifiedMcpTool, type ToolRuntimeContext } from "./mcp/dispatcher";
 import { getMcpTool, getMcpToolByName, type McpToolRow } from "./mcp/tool-config";
 import { getSystem, type SystemPermissionMode, type SystemRow } from "./systems";
 import { createGatewayAuditLog } from "./gateway-audit";
+import { checkRateLimit } from "./rate-limit";
 import {
   summarizeIdentity,
   type PlannerIdentitySummary,
@@ -94,6 +95,18 @@ export async function callToolGateway(
   }
   if (!tool.enabled) {
     const response = failure("ToolNotFound", `MCP tool disabled: ${tool.name}`, baseMeta, request);
+    auditGatewayCall(request, response, tool.name, system.auditEnabled);
+    return response;
+  }
+
+  const rateLimit = checkGatewayRateLimit(system, tool, request);
+  if (!rateLimit.allowed) {
+    const response = failure(
+      "RateLimited",
+      rateLimit.message,
+      baseMeta,
+      request,
+    );
     auditGatewayCall(request, response, tool.name, system.auditEnabled);
     return response;
   }
@@ -209,6 +222,49 @@ function auditGatewayCall(
   } catch (e) {
     console.error("[tool-gateway] audit log failed", e);
   }
+}
+
+function checkGatewayRateLimit(
+  system: SystemRow,
+  tool: McpToolRow,
+  request: ToolGatewayRequest,
+): { allowed: boolean; message: string } {
+  const subject = rateLimitSubject(request);
+  const baseKey = `${system.id}:${tool.id}:${subject}`;
+
+  const toolDecision = checkRateLimit(`tool:${baseKey}`, tool.rateLimit);
+  if (!toolDecision.allowed) {
+    return {
+      allowed: false,
+      message: rateLimitMessage("Tool", toolDecision.unit, toolDecision.resetAt),
+    };
+  }
+
+  const systemDecision = checkRateLimit(`system:${baseKey}`, system.rateLimit);
+  if (!systemDecision.allowed) {
+    return {
+      allowed: false,
+      message: rateLimitMessage("System", systemDecision.unit, systemDecision.resetAt),
+    };
+  }
+
+  return { allowed: true, message: "Rate limit allowed" };
+}
+
+function rateLimitSubject(request: ToolGatewayRequest): string {
+  const user = request.userContext;
+  return (
+    user?.userId ||
+    user?.sessionUserId ||
+    request.executionContext.conversationId ||
+    request.executionContext.requestId ||
+    "anonymous"
+  );
+}
+
+function rateLimitMessage(scope: string, unit?: string, resetAt?: number): string {
+  const reset = resetAt ? ` Reset at ${new Date(resetAt).toISOString()}.` : "";
+  return `${scope} rate limit exceeded${unit ? ` for this ${unit}` : ""}.${reset}`;
 }
 
 async function checkPermission(
