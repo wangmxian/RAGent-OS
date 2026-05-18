@@ -73,4 +73,4 @@ and sensitive credentials must never be written to logs.
 
 - GitHub Issue: #21 https://github.com/wangmxian/RAGent-OS/issues/21
 - Branch: `issue/010-tool-gateway-audit-redaction`
-- PR: create after implementation and verification.
+- PR: #22 https://github.com/wangmxian/RAGent-OS/pull/22
