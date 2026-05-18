@@ -67,4 +67,4 @@ structured rate limit behavior before expensive or sensitive tool calls run.
 
 - GitHub Issue: #23 https://github.com/wangmxian/RAGent-OS/issues/23
 - Branch: `issue/011-rate-limit`
-- PR: create after implementation and verification.
+- PR: #24 https://github.com/wangmxian/RAGent-OS/pull/24
