@@ -1,4 +1,7 @@
 import { getDb, now } from "./db";
+import { listMcpTools, type McpToolRow } from "./mcp/tool-config";
+import { listSkills, type SkillRow } from "./skills";
+import { getSystem, type SystemRow } from "./systems";
 
 export const AGENT_PROMPT_KEY = "agent-routing";
 
@@ -22,6 +25,14 @@ export const DEFAULT_AGENT_PROMPT = [
   "- Knowledge-base retrieval must use ragSearch or a skill that contains ragSearch.",
   "- Prefer skill_call when the request needs tool output plus summarization or dependent parameter passing.",
   "- Extract query and time from the latest user input when using skill_call.",
+  "- Do not make permission decisions. Tool execution permissions are checked by Tool Gateway.",
+  "- If Tool Gateway returns PermissionDenied, report permission failure clearly.",
+  "",
+  "System prompts:",
+  "{{systemPrompts}}",
+  "",
+  "Skill prompt:",
+  "{{skillPrompt}}",
   "",
   "Skills:",
   "{{skills}}",
@@ -77,9 +88,145 @@ export function resetAgentPromptConfig(): AgentPromptConfig {
 export function renderAgentPrompt(input: {
   skills: string;
   mcpTools: string;
+  systemPrompts?: string;
+  skillPrompt?: string;
 }): string {
   const content = getAgentPromptConfig().content;
-  return content
+  let rendered = content
+    .replaceAll("{{systemPrompts}}", input.systemPrompts || "(none)")
+    .replaceAll("{{skillPrompt}}", input.skillPrompt || "(none)")
     .replaceAll("{{skills}}", input.skills || "(none)")
     .replaceAll("{{mcpTools}}", input.mcpTools || "(none)");
+  if (!content.includes("{{systemPrompts}}")) {
+    rendered += `\n\nSystem prompts:\n${input.systemPrompts || "(none)"}`;
+  }
+  if (!content.includes("{{skillPrompt}}")) {
+    rendered += `\n\nSkill prompt:\n${input.skillPrompt || "(none)"}`;
+  }
+  return rendered;
+}
+
+export interface AgentPromptPreviewInput {
+  skills?: SkillRow[];
+  mcpTools?: PromptToolDescriptor[];
+  selectedSkillId?: string | null;
+}
+
+export interface PromptToolDescriptor {
+  name: string;
+  pathSuffix: string;
+  description: string;
+  schema: Record<string, unknown>;
+  systemId: string;
+  permissionMode: string;
+  enabled?: boolean;
+}
+
+export interface AgentPromptPreview {
+  prompt: string;
+  sections: {
+    globalPrompt: string;
+    systemPrompts: string;
+    skillPrompt: string;
+    skills: string;
+    mcpTools: string;
+  };
+  relevantSystemIds: string[];
+  selectedSkillId?: string | null;
+}
+
+export function renderLayeredAgentPrompt(
+  input: AgentPromptPreviewInput = {},
+): AgentPromptPreview {
+  const skills = input.skills ?? listSkills().filter((skill) => skill.steps.length > 0);
+  const mcpTools = input.mcpTools ?? listMcpTools().filter((tool) => tool.enabled);
+  const selectedSkill = input.selectedSkillId
+    ? skills.find((skill) => skill.id === input.selectedSkillId) ?? null
+    : null;
+  const relevantSystems = resolveRelevantSystems(skills, mcpTools, selectedSkill);
+  const systemPrompts = relevantSystems
+    .filter((system) => system.prompt.trim())
+    .map((system) =>
+      JSON.stringify({
+        systemId: system.id,
+        name: system.name,
+        prompt: system.prompt,
+      }),
+    )
+    .join("\n");
+  const skillPrompt = selectedSkill?.system_prompt?.trim() || "";
+  const skillList = skills.map(skillForPrompt).join("\n");
+  const toolList = mcpTools.map(toolForPrompt).join("\n");
+  const globalPrompt = getAgentPromptConfig().content;
+
+  return {
+    prompt: renderAgentPrompt({
+      skills: skillList,
+      mcpTools: toolList,
+      systemPrompts,
+      skillPrompt,
+    }),
+    sections: {
+      globalPrompt,
+      systemPrompts,
+      skillPrompt,
+      skills: skillList,
+      mcpTools: toolList,
+    },
+    relevantSystemIds: relevantSystems.map((system) => system.id),
+    selectedSkillId: selectedSkill?.id ?? input.selectedSkillId ?? null,
+  };
+}
+
+function resolveRelevantSystems(
+  skills: SkillRow[],
+  mcpTools: PromptToolDescriptor[],
+  selectedSkill: SkillRow | null,
+): SystemRow[] {
+  const toolByName = new Map(mcpTools.map((tool) => [tool.name, tool]));
+  const systemIds = new Set<string>();
+
+  for (const tool of mcpTools) {
+    systemIds.add(tool.systemId);
+  }
+
+  for (const skill of skills) {
+    for (const step of skill.steps) {
+      const tool = toolByName.get(step.tool);
+      if (tool) systemIds.add(tool.systemId);
+    }
+  }
+
+  if (selectedSkill) {
+    systemIds.clear();
+    for (const step of selectedSkill.steps) {
+      const tool = toolByName.get(step.tool);
+      if (tool) systemIds.add(tool.systemId);
+    }
+  }
+
+  return [...systemIds]
+    .map((id) => getSystem(id))
+    .filter((system): system is SystemRow => !!system && system.enabled);
+}
+
+function skillForPrompt(skill: SkillRow): string {
+  return JSON.stringify({
+    id: skill.id,
+    name: skill.name,
+    description: skill.description,
+    version: skill.version,
+    steps: skill.steps.map((step) => step.tool),
+  });
+}
+
+function toolForPrompt(tool: PromptToolDescriptor): string {
+  return JSON.stringify({
+    name: tool.name,
+    pathSuffix: tool.pathSuffix,
+    description: tool.description,
+    schema: tool.schema,
+    systemId: tool.systemId,
+    permissionMode: tool.permissionMode,
+  });
 }
