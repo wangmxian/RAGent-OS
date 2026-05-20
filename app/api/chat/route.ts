@@ -17,7 +17,7 @@ import {
   listUnifiedMcpTools,
   type UnifiedMcpToolDescriptor,
 } from "@/lib/mcp/dispatcher";
-import { renderAgentPrompt } from "@/lib/agent-prompt";
+import { renderLayeredAgentPrompt } from "@/lib/agent-prompt";
 import { createExecutionLog } from "@/lib/execution-logs";
 import { callToolGateway } from "@/lib/tool-gateway";
 import { resolveIdentityContext } from "@/lib/identity-context";
@@ -420,17 +420,14 @@ async function decideExecution(
   });
 
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const skillList = skills.map(skillForPrompt).join("\n");
-  const mcpToolList = mcpTools.map(toolForPrompt).join("\n");
+  const promptPreview = renderLayeredAgentPrompt({
+    skills,
+    mcpTools,
+  });
 
   const res = await llm.invoke(
     [
-      new SystemMessage(
-        renderAgentPrompt({
-          skills: skillList,
-          mcpTools: mcpToolList,
-        }),
-      ),
+      new SystemMessage(promptPreview.prompt),
       new HumanMessage(
         `Latest user input: ${lastUser?.content ?? ""}\n\nAvailable file scope: ${JSON.stringify(
           opts.knowledgeEnabled === false ? [] : opts.fileIds ?? [],
@@ -620,23 +617,4 @@ function plainObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function skillForPrompt(skill: ReturnType<typeof listSkills>[number]): string {
-  return JSON.stringify({
-    id: skill.id,
-    name: skill.name,
-    description: skill.description,
-    version: skill.version,
-    steps: skill.steps.map((step) => step.tool),
-  });
-}
-
-function toolForPrompt(tool: UnifiedMcpToolDescriptor): string {
-  return JSON.stringify({
-    name: tool.name,
-    pathSuffix: tool.pathSuffix,
-    description: tool.description,
-    schema: tool.schema,
-  });
 }

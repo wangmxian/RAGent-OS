@@ -51,6 +51,7 @@ interface Draft {
   name: string;
   description: string;
   version: string;
+  systemPrompt: string;
   steps: DraftStep[];
 }
 
@@ -58,6 +59,7 @@ const EMPTY_DRAFT: Draft = {
   name: "",
   description: "",
   version: "v1",
+  systemPrompt: "",
   steps: [],
 };
 
@@ -92,6 +94,7 @@ export default function SkillsPage() {
       name: skill.name,
       description: skill.description ?? "",
       version: skill.version || "v1",
+      systemPrompt: skill.system_prompt ?? "",
       steps: skill.steps.map((step) => ({
         tool: step.tool,
         paramsText: JSON.stringify(step.params ?? {}, null, 2),
@@ -157,6 +160,7 @@ export default function SkillsPage() {
         name: draft.name.trim() || "未命名 Skill",
         description: draft.description.trim() || null,
         version: draft.version.trim() || "v1",
+        systemPrompt: draft.systemPrompt,
         steps,
         toolIds: steps.map((step) => step.tool),
       };
@@ -251,6 +255,16 @@ export default function SkillsPage() {
                   setDraft({ ...draft, version: e.target.value })
                 }
                 className="input"
+              />
+            </Field>
+            <Field label="Skill Prompt">
+              <textarea
+                value={draft.systemPrompt}
+                onChange={(e) =>
+                  setDraft({ ...draft, systemPrompt: e.target.value })
+                }
+                className="input min-h-28"
+                placeholder="Optional prompt injected only when this Skill is selected"
               />
             </Field>
             {error && (

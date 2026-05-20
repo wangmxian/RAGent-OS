@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   DEFAULT_AGENT_PROMPT,
   getAgentPromptConfig,
+  renderLayeredAgentPrompt,
   resetAgentPromptConfig,
   updateAgentPromptConfig,
 } from "@/lib/agent-prompt";
@@ -9,10 +10,12 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const selectedSkillId = new URL(req.url).searchParams.get("skillId");
   return NextResponse.json({
     prompt: getAgentPromptConfig(),
     defaultPrompt: DEFAULT_AGENT_PROMPT,
+    preview: renderLayeredAgentPrompt({ selectedSkillId }),
   });
 }
 

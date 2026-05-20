@@ -10,10 +10,24 @@ interface PromptConfig {
   updatedAt: number;
 }
 
+interface PromptPreview {
+  prompt: string;
+  relevantSystemIds: string[];
+  selectedSkillId?: string | null;
+  sections: {
+    globalPrompt: string;
+    systemPrompts: string;
+    skillPrompt: string;
+    skills: string;
+    mcpTools: string;
+  };
+}
+
 export default function PromptPage() {
   const [prompt, setPrompt] = useState<PromptConfig | null>(null);
   const [defaultPrompt, setDefaultPrompt] = useState("");
   const [content, setContent] = useState("");
+  const [preview, setPreview] = useState<PromptPreview | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,6 +39,7 @@ export default function PromptPage() {
     setPrompt(json.prompt);
     setDefaultPrompt(json.defaultPrompt || "");
     setContent(json.prompt?.content || "");
+    setPreview(json.preview ?? null);
   }
 
   useEffect(() => {
@@ -42,9 +57,7 @@ export default function PromptPage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "保存 Prompt 失败");
-      setPrompt(json.prompt);
-      setDefaultPrompt(json.defaultPrompt || "");
-      setContent(json.prompt?.content || "");
+      await load();
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -142,6 +155,27 @@ export default function PromptPage() {
                   : "default"}
               </div>
             </div>
+          </section>
+          <section className="rounded-md border border-slate-200 bg-white p-4">
+            <h2 className="text-sm font-semibold">Prompt Preview</h2>
+            <div className="mt-3 space-y-2 text-xs text-slate-600">
+              <div>
+                Relevant systems:{" "}
+                {preview?.relevantSystemIds?.length
+                  ? preview.relevantSystemIds.join(", ")
+                  : "(none)"}
+              </div>
+              <div>
+                System prompt chars: {preview?.sections.systemPrompts.length ?? 0}
+              </div>
+              <div>Skill prompt chars: {preview?.sections.skillPrompt.length ?? 0}</div>
+            </div>
+            <textarea
+              value={preview?.prompt ?? ""}
+              readOnly
+              className="input mt-3 min-h-48 font-mono text-[11px]"
+              spellCheck={false}
+            />
           </section>
         </aside>
       </div>
