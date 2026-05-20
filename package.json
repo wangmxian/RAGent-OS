@@ -17,7 +17,8 @@
     "smoke:audit": "tsx scripts/gateway-audit-smoke.ts",
     "smoke:rate-limit": "tsx scripts/rate-limit-smoke.ts",
     "smoke:fallback": "tsx scripts/fallback-smoke.ts",
-    "smoke:prompt-layering": "tsx scripts/prompt-layering-smoke.ts"
+    "smoke:prompt-layering": "tsx scripts/prompt-layering-smoke.ts",
+    "smoke:rag-scope": "tsx scripts/rag-scope-smoke.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.1.45",

@@ -1,5 +1,6 @@
 import { VLEmbeddings } from "./embeddings";
 import { vectorSearch, type SearchHit } from "./vectorstore";
+import type { RagScopeFilter } from "./rag-scope";
 
 export interface RetrieveOptions {
   /** 召回数量，默认 5 */
@@ -16,6 +17,7 @@ export interface RetrieveOptions {
   mmrFetchK?: number;
   /** MMR lambda：1=只看相关性，0=只看多样性 */
   mmrLambda?: number;
+  scopeFilter?: RagScopeFilter;
 }
 
 export interface RetrieveResult {
@@ -46,6 +48,7 @@ export async function retrieve(
     useMmr = false,
     mmrFetchK,
     mmrLambda = 0.5,
+    scopeFilter,
   } = options;
 
   const emb = getEmbeddings();
@@ -56,6 +59,7 @@ export async function retrieve(
     k: fetchK,
     fileIds,
     modalities,
+    scopeFilter,
   });
 
   if (maxDistance != null) {

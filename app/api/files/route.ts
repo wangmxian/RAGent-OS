@@ -6,6 +6,7 @@ import {
 } from "@/lib/files/ingest";
 import { SUPPORTED_EXTENSIONS } from "@/lib/files/parse";
 import path from "node:path";
+import { normalizeScopeMetadata } from "@/lib/rag-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +48,14 @@ export async function POST(req: NextRequest) {
   }
 
   const results: any[] = [];
+  const scope = normalizeScopeMetadata({
+    systemId: form.get("systemId"),
+    skillId: form.get("skillId"),
+    visibility: form.get("visibility"),
+    userId: form.get("userId"),
+    tenantId: form.get("tenantId"),
+    kbRoleIds: form.get("kbRoleIds"),
+  });
   for (const f of files) {
     const ext = path.extname(f.name).toLowerCase();
     if (!SUPPORTED_EXTENSIONS.includes(ext)) {
@@ -63,6 +72,7 @@ export async function POST(req: NextRequest) {
         buf,
         f.name,
         f.type || "application/octet-stream",
+        { scope },
       );
       // 同步索引；前端可看到 status 直接 ready
       try {

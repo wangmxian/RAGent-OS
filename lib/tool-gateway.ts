@@ -139,7 +139,11 @@ async function callToolGatewayInternal(
   }
 
   try {
-    const result = await callUnifiedMcpTool(tool.name, request.params, runtime);
+    const result = await callUnifiedMcpTool(
+      tool.name,
+      request.params,
+      enrichRuntime(runtime, request, tool),
+    );
     const response: ToolGatewayResponse = {
       ok: true,
       result,
@@ -308,6 +312,38 @@ async function callConfiguredFallback(
     fallbackResponse.gateway.permissionAllowed ?? base.permissionAllowed,
     true,
   );
+}
+
+function enrichRuntime(
+  runtime: ToolRuntimeContext,
+  request: ToolGatewayRequest,
+  tool: McpToolRow,
+): ToolRuntimeContext {
+  return {
+    ...runtime,
+    userContext: runtime.userContext ?? request.userContext,
+    policyContext: {
+      ...request.policyContext,
+      ...runtime.policyContext,
+      requestId:
+        runtime.policyContext?.requestId ??
+        request.policyContext?.requestId ??
+        request.executionContext.requestId,
+      conversationId:
+        runtime.policyContext?.conversationId ??
+        request.policyContext?.conversationId ??
+        request.executionContext.conversationId,
+      source: runtime.policyContext?.source ?? request.policyContext?.source ?? "system",
+      skillId:
+        runtime.policyContext?.skillId ??
+        request.policyContext?.skillId ??
+        request.executionContext.skillId,
+      systemId:
+        runtime.policyContext?.systemId ??
+        request.policyContext?.systemId ??
+        tool.systemId,
+    },
+  };
 }
 
 function auditGatewayCall(
