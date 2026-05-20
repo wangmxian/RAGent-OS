@@ -35,6 +35,11 @@ interface McpTool {
     perMinute?: number;
     perHour?: number;
   };
+  fallback: {
+    enabled: boolean;
+    fallbackToolId?: string;
+    fallbackParams?: Record<string, unknown>;
+  };
   serverId: string | null;
 }
 
@@ -68,6 +73,9 @@ interface ToolDraft {
   rateLimitEnabled: boolean;
   perMinute: string;
   perHour: string;
+  fallbackEnabled: boolean;
+  fallbackToolId: string;
+  fallbackParamsText: string;
   serverId: string;
 }
 
@@ -90,6 +98,9 @@ const EMPTY_TOOL: ToolDraft = {
   rateLimitEnabled: false,
   perMinute: "",
   perHour: "",
+  fallbackEnabled: false,
+  fallbackToolId: "",
+  fallbackParamsText: "{}",
   serverId: "",
 };
 
@@ -150,6 +161,9 @@ export default function McpPage() {
       rateLimitEnabled: !!tool.rateLimit?.enabled,
       perMinute: tool.rateLimit?.perMinute?.toString() ?? "",
       perHour: tool.rateLimit?.perHour?.toString() ?? "",
+      fallbackEnabled: !!tool.fallback?.enabled,
+      fallbackToolId: tool.fallback?.fallbackToolId ?? "",
+      fallbackParamsText: JSON.stringify(tool.fallback?.fallbackParams ?? {}, null, 2),
       serverId: tool.serverId ?? "",
     });
   }
@@ -161,6 +175,14 @@ export default function McpPage() {
       const schema = JSON.parse(toolDraft.schemaText || "{}");
       if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
         throw new Error("参数 schema 必须是 JSON 对象");
+      }
+      const fallbackParams = JSON.parse(toolDraft.fallbackParamsText || "{}");
+      if (
+        !fallbackParams ||
+        typeof fallbackParams !== "object" ||
+        Array.isArray(fallbackParams)
+      ) {
+        throw new Error("fallback params must be a JSON object");
       }
       const res = await fetch("/api/mcp-tools", {
         method: toolDraft.id ? "PATCH" : "POST",
@@ -179,6 +201,11 @@ export default function McpPage() {
             enabled: toolDraft.rateLimitEnabled,
             perMinute: toolDraft.perMinute ? Number(toolDraft.perMinute) : undefined,
             perHour: toolDraft.perHour ? Number(toolDraft.perHour) : undefined,
+          },
+          fallback: {
+            enabled: toolDraft.fallbackEnabled,
+            fallbackToolId: toolDraft.fallbackToolId || undefined,
+            fallbackParams,
           },
           serverId: toolDraft.serverId || null,
         }),
@@ -433,6 +460,60 @@ export default function McpPage() {
                   </div>
                 )}
               </div>
+              <div className="rounded-md border border-slate-200 p-3">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    className="accent-slate-950"
+                    checked={toolDraft.fallbackEnabled}
+                    onChange={(e) =>
+                      setToolDraft({
+                        ...toolDraft,
+                        fallbackEnabled: e.target.checked,
+                      })
+                    }
+                  />
+                  启用 fallback 工具
+                </label>
+                {toolDraft.fallbackEnabled && (
+                  <div className="mt-3 space-y-2">
+                    <Field label="Fallback Tool">
+                      <select
+                        value={toolDraft.fallbackToolId}
+                        onChange={(e) =>
+                          setToolDraft({
+                            ...toolDraft,
+                            fallbackToolId: e.target.value,
+                          })
+                        }
+                        className="input"
+                      >
+                        <option value="">请选择 fallback tool</option>
+                        {tools
+                          .filter((tool) => tool.id !== toolDraft.id)
+                          .map((tool) => (
+                            <option key={tool.id} value={tool.id}>
+                              {tool.name} / {systemLabel(tool.systemId, systemById)}
+                            </option>
+                          ))}
+                      </select>
+                    </Field>
+                    <Field label="Fallback Params JSON">
+                      <textarea
+                        value={toolDraft.fallbackParamsText}
+                        onChange={(e) =>
+                          setToolDraft({
+                            ...toolDraft,
+                            fallbackParamsText: e.target.value,
+                          })
+                        }
+                        className="input min-h-24 font-mono"
+                        spellCheck={false}
+                      />
+                    </Field>
+                  </div>
+                )}
+              </div>
               <Field label="参数 Schema JSON">
                 <textarea
                   value={toolDraft.schemaText}
@@ -591,6 +672,11 @@ export default function McpPage() {
                           rate: {rateLimitLabel(tool.rateLimit)}
                         </span>
                       )}
+                      {tool.fallback?.enabled && (
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                          fallback: {fallbackLabel(tool.fallback, tools)}
+                        </span>
+                      )}
                       <Status enabled={tool.enabled} />
                     </div>
                     <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
@@ -721,4 +807,12 @@ function rateLimitLabel(rateLimit: McpTool["rateLimit"]): string {
   if (rateLimit.perMinute) parts.push(`${rateLimit.perMinute}/min`);
   if (rateLimit.perHour) parts.push(`${rateLimit.perHour}/hour`);
   return parts.length ? parts.join(", ") : "enabled";
+}
+
+function fallbackLabel(
+  fallback: McpTool["fallback"],
+  tools: McpTool[],
+): string {
+  const tool = tools.find((item) => item.id === fallback.fallbackToolId);
+  return tool?.name ?? fallback.fallbackToolId ?? "enabled";
 }

@@ -15,7 +15,8 @@
     "smoke:identity": "tsx scripts/identity-context-smoke.ts",
     "smoke:permission": "tsx scripts/permission-preflight-smoke.ts",
     "smoke:audit": "tsx scripts/gateway-audit-smoke.ts",
-    "smoke:rate-limit": "tsx scripts/rate-limit-smoke.ts"
+    "smoke:rate-limit": "tsx scripts/rate-limit-smoke.ts",
+    "smoke:fallback": "tsx scripts/fallback-smoke.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.1.45",
