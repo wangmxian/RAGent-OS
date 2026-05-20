@@ -180,6 +180,7 @@ function migrate(db: Database.Database) {
       handler_type  TEXT NOT NULL CHECK(handler_type IN ('local','rag-http','llm')),
       system_id     TEXT NOT NULL DEFAULT 'default',
       permission_mode TEXT NOT NULL CHECK(permission_mode IN ('inherit','none','preflight','inline')) DEFAULT 'inherit',
+      rate_limit    TEXT NOT NULL DEFAULT '{"enabled":false}',
       server_id     TEXT,
       created_at    INTEGER NOT NULL,
       updated_at    INTEGER NOT NULL,
@@ -250,6 +251,12 @@ function migrate(db: Database.Database) {
     "mcp_tools",
     "permission_mode",
     "TEXT NOT NULL DEFAULT 'inherit'",
+  );
+  addColumnIfMissing(
+    db,
+    "mcp_tools",
+    "rate_limit",
+    "TEXT NOT NULL DEFAULT '{\"enabled\":false}'",
   );
   addColumnIfMissing(db, "skills", "version", "TEXT NOT NULL DEFAULT 'v1'");
   addColumnIfMissing(db, "skills", "steps", "TEXT NOT NULL DEFAULT '[]'");

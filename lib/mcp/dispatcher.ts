@@ -10,6 +10,7 @@ import { callRagHttpPath } from "./http-client";
 import { getMcpToolByName, listEnabledMcpTools } from "./tool-config";
 
 import type { PolicyContext, UserContext } from "../identity-context";
+import type { SystemRateLimit } from "../systems";
 
 export type ToolHandlerType = "local" | "rag-http" | "llm";
 
@@ -22,6 +23,7 @@ export interface UnifiedMcpToolDescriptor {
   handlerType: ToolHandlerType;
   systemId: string;
   permissionMode: string;
+  rateLimit: SystemRateLimit;
   serverId?: string;
   serverName?: string;
 }
@@ -56,6 +58,7 @@ export function listUnifiedMcpTools(): UnifiedMcpToolDescriptor[] {
       handlerType: tool.handlerType,
       systemId: tool.systemId,
       permissionMode: tool.permissionMode,
+      rateLimit: tool.rateLimit,
       serverId: tool.serverId ?? undefined,
       serverName: server?.name,
     };
