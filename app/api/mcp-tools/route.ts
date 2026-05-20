@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
       systemId: body.systemId ?? body.system_id,
       permissionMode: body.permissionMode ?? body.permission_mode,
       rateLimit: parseRateLimit(body.rateLimit ?? body.rate_limit),
+      fallback: parseFallback(body.fallback),
       serverId: body.serverId ?? body.server_id ?? null,
     });
     return NextResponse.json({ tool });
@@ -66,6 +67,8 @@ export async function PATCH(req: NextRequest) {
         body.rateLimit === undefined && body.rate_limit === undefined
           ? undefined
           : parseRateLimit(body.rateLimit ?? body.rate_limit),
+      fallback:
+        body.fallback === undefined ? undefined : parseFallback(body.fallback),
       serverId: body.serverId ?? body.server_id,
     });
     if (!tool) {
@@ -121,4 +124,25 @@ function numberOrUndefined(value: unknown): number | undefined {
   if (value === "" || value == null) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseFallback(value: unknown) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { enabled: false };
+  }
+  const raw = value as Record<string, unknown>;
+  const fallbackParams = raw.fallbackParams ?? raw.fallback_params;
+  return {
+    enabled: !!raw.enabled,
+    fallbackToolId: stringOrUndefined(raw.fallbackToolId ?? raw.fallback_tool_id),
+    fallbackParams:
+      fallbackParams && typeof fallbackParams === "object" && !Array.isArray(fallbackParams)
+        ? (fallbackParams as Record<string, unknown>)
+        : undefined,
+  };
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

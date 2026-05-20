@@ -181,6 +181,7 @@ function migrate(db: Database.Database) {
       system_id     TEXT NOT NULL DEFAULT 'default',
       permission_mode TEXT NOT NULL CHECK(permission_mode IN ('inherit','none','preflight','inline')) DEFAULT 'inherit',
       rate_limit    TEXT NOT NULL DEFAULT '{"enabled":false}',
+      fallback      TEXT NOT NULL DEFAULT '{"enabled":false}',
       server_id     TEXT,
       created_at    INTEGER NOT NULL,
       updated_at    INTEGER NOT NULL,
@@ -256,6 +257,12 @@ function migrate(db: Database.Database) {
     db,
     "mcp_tools",
     "rate_limit",
+    "TEXT NOT NULL DEFAULT '{\"enabled\":false}'",
+  );
+  addColumnIfMissing(
+    db,
+    "mcp_tools",
+    "fallback",
     "TEXT NOT NULL DEFAULT '{\"enabled\":false}'",
   );
   addColumnIfMissing(db, "skills", "version", "TEXT NOT NULL DEFAULT 'v1'");

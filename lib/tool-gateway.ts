@@ -65,9 +65,22 @@ export class ToolGatewayError extends Error {
   }
 }
 
+interface GatewayInternalOptions {
+  fallbackDepth?: number;
+  fallbackChain?: string[];
+}
+
 export async function callToolGateway(
   request: ToolGatewayRequest,
   runtime: ToolRuntimeContext = {},
+): Promise<ToolGatewayResponse> {
+  return callToolGatewayInternal(request, runtime, {});
+}
+
+async function callToolGatewayInternal(
+  request: ToolGatewayRequest,
+  runtime: ToolRuntimeContext,
+  options: GatewayInternalOptions,
 ): Promise<ToolGatewayResponse> {
   const startedAt = Date.now();
   const tool = getMcpToolByName(request.toolName);
@@ -135,6 +148,23 @@ export async function callToolGateway(
     auditGatewayCall(request, response, tool.name, system.auditEnabled);
     return response;
   } catch (e: any) {
+    const fallback = await callConfiguredFallback(
+      tool,
+      request,
+      runtime,
+      {
+        ...baseMeta,
+        permissionChecked: permission.checked,
+        permissionAllowed: permission.allowed,
+        primaryErrorMessage: e?.message || String(e),
+      },
+      options,
+    );
+    if (fallback) {
+      auditGatewayCall(request, fallback, tool.name, system.auditEnabled);
+      return fallback;
+    }
+
     const response = failure(
       "ToolFailed",
       e?.message || String(e),
@@ -164,11 +194,18 @@ function failure(
   request?: ToolGatewayRequest,
   permissionChecked = false,
   permissionAllowed?: boolean,
+  fallbackUsed = false,
 ): ToolGatewayResponse & { ok: false } {
   return {
     ok: false,
     error: { type, message },
-    gateway: metadata(base, request, permissionChecked, permissionAllowed),
+    gateway: metadata(
+      base,
+      request,
+      permissionChecked,
+      permissionAllowed,
+      fallbackUsed,
+    ),
   };
 }
 
@@ -176,17 +213,101 @@ function metadata(base: {
   startedAt: number;
   systemId: string;
   toolId: string;
-}, request?: ToolGatewayRequest, permissionChecked = false, permissionAllowed?: boolean): ToolGatewayMetadata {
+}, request?: ToolGatewayRequest, permissionChecked = false, permissionAllowed?: boolean, fallbackUsed = false): ToolGatewayMetadata {
   const mode = request?.userContext?.source === "personal" ? "personal" : "enterprise";
   return {
     systemId: base.systemId,
     toolId: base.toolId,
     permissionChecked,
     permissionAllowed,
-    fallbackUsed: false,
+    fallbackUsed,
     durationMs: Date.now() - base.startedAt,
     identity: request ? summarizeIdentity(request.userContext, mode) : undefined,
   };
+}
+
+async function callConfiguredFallback(
+  tool: McpToolRow,
+  request: ToolGatewayRequest,
+  runtime: ToolRuntimeContext,
+  base: {
+    startedAt: number;
+    systemId: string;
+    toolId: string;
+    permissionChecked: boolean;
+    permissionAllowed?: boolean;
+    primaryErrorMessage: string;
+  },
+  options: GatewayInternalOptions,
+): Promise<ToolGatewayResponse | null> {
+  if (!tool.fallback.enabled || !tool.fallback.fallbackToolId) return null;
+
+  const depth = options.fallbackDepth ?? 0;
+  const chain = options.fallbackChain ?? [tool.id];
+  if (depth >= 1 || chain.includes(tool.fallback.fallbackToolId)) {
+    return failure(
+      "FallbackFailed",
+      "Fallback chain is invalid or recursive",
+      base,
+      request,
+      base.permissionChecked,
+      base.permissionAllowed,
+      true,
+    );
+  }
+
+  const fallbackTool = getMcpTool(tool.fallback.fallbackToolId);
+  if (!fallbackTool) {
+    return failure(
+      "FallbackFailed",
+      `Fallback tool not found: ${tool.fallback.fallbackToolId}`,
+      base,
+      request,
+      base.permissionChecked,
+      base.permissionAllowed,
+      true,
+    );
+  }
+
+  const fallbackResponse = await callToolGatewayInternal(
+    {
+      ...request,
+      toolName: fallbackTool.name,
+      params: {
+        ...request.params,
+        ...(tool.fallback.fallbackParams ?? {}),
+      },
+    },
+    runtime,
+    {
+      fallbackDepth: depth + 1,
+      fallbackChain: [...chain, fallbackTool.id],
+    },
+  );
+
+  if (fallbackResponse.ok) {
+    return {
+      ok: true,
+      result: fallbackResponse.result,
+      gateway: metadata(
+        base,
+        request,
+        base.permissionChecked || fallbackResponse.gateway.permissionChecked,
+        fallbackResponse.gateway.permissionAllowed ?? base.permissionAllowed,
+        true,
+      ),
+    };
+  }
+
+  return failure(
+    "FallbackFailed",
+    `Primary tool failed: ${base.primaryErrorMessage}; fallback failed: ${fallbackResponse.error.message}`,
+    base,
+    request,
+    base.permissionChecked || fallbackResponse.gateway.permissionChecked,
+    fallbackResponse.gateway.permissionAllowed ?? base.permissionAllowed,
+    true,
+  );
 }
 
 function auditGatewayCall(

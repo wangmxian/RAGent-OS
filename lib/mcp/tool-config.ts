@@ -16,6 +16,7 @@ export interface McpToolRow {
   systemId: string;
   permissionMode: ToolPermissionMode;
   rateLimit: SystemRateLimit;
+  fallback: ToolFallbackConfig;
   serverId: string | null;
   createdAt: number;
   updatedAt: number;
@@ -32,6 +33,7 @@ interface McpToolRowDb {
   system_id: string | null;
   permission_mode: ToolPermissionMode | null;
   rate_limit: string | null;
+  fallback: string | null;
   server_id: string | null;
   created_at: number;
   updated_at: number;
@@ -47,7 +49,14 @@ export interface UpsertMcpToolInput {
   systemId?: string;
   permissionMode?: ToolPermissionMode;
   rateLimit?: SystemRateLimit;
+  fallback?: ToolFallbackConfig;
   serverId?: string | null;
+}
+
+export interface ToolFallbackConfig {
+  enabled: boolean;
+  fallbackToolId?: string;
+  fallbackParams?: Record<string, unknown>;
 }
 
 function parse(row: McpToolRowDb): McpToolRow {
@@ -62,6 +71,7 @@ function parse(row: McpToolRowDb): McpToolRow {
     systemId: row.system_id || "default",
     permissionMode: normalizePermissionMode(row.permission_mode ?? "inherit"),
     rateLimit: safeRateLimit(row.rate_limit),
+    fallback: safeFallback(row.fallback),
     serverId: row.server_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -100,8 +110,9 @@ export function createMcpTool(input: UpsertMcpToolInput): McpToolRow {
   db.prepare(
     `INSERT INTO mcp_tools (
        id, name, path_suffix, description, schema, enabled, handler_type,
-       system_id, permission_mode, rate_limit, server_id, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       system_id, permission_mode, rate_limit, fallback, server_id,
+       created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     cleanRequired(input.name, "name"),
@@ -113,6 +124,7 @@ export function createMcpTool(input: UpsertMcpToolInput): McpToolRow {
     cleanSystemId(input.systemId),
     normalizePermissionMode(input.permissionMode ?? "inherit"),
     JSON.stringify(normalizeRateLimit(input.rateLimit)),
+    JSON.stringify(normalizeFallback(input.fallback)),
     input.serverId ?? null,
     t,
     t,
@@ -144,6 +156,10 @@ export function updateMcpTool(
         ? current.permissionMode
         : normalizePermissionMode(patch.permissionMode),
     rateLimit: normalizeRateLimit(patch.rateLimit ?? current.rateLimit),
+    fallback:
+      patch.fallback === undefined
+        ? current.fallback
+        : normalizeFallback(patch.fallback),
     serverId: patch.serverId === undefined ? current.serverId : patch.serverId,
     updatedAt: now(),
   };
@@ -152,7 +168,7 @@ export function updateMcpTool(
     .prepare(
       `UPDATE mcp_tools SET
          name=?, path_suffix=?, description=?, schema=?, enabled=?,
-         handler_type=?, system_id=?, permission_mode=?, rate_limit=?,
+         handler_type=?, system_id=?, permission_mode=?, rate_limit=?, fallback=?,
          server_id=?, updated_at=?
        WHERE id=?`,
     )
@@ -166,6 +182,7 @@ export function updateMcpTool(
       next.systemId,
       next.permissionMode,
       JSON.stringify(next.rateLimit),
+      JSON.stringify(next.fallback),
       next.serverId,
       next.updatedAt,
       id,
@@ -194,6 +211,26 @@ function normalizeRateLimit(value: SystemRateLimit | undefined): SystemRateLimit
   };
 }
 
+function normalizeFallback(
+  value: ToolFallbackConfig | undefined,
+): ToolFallbackConfig {
+  if (!value || !value.enabled) return { enabled: false };
+  const fallbackToolId = cleanOptional(value.fallbackToolId);
+  if (!fallbackToolId) return { enabled: false };
+  return {
+    enabled: true,
+    fallbackToolId,
+    fallbackParams: normalizeFallbackParams(value.fallbackParams),
+  };
+}
+
+function normalizeFallbackParams(
+  value: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value;
+}
+
 function normalizePositiveInt(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   const normalized = Math.trunc(value);
@@ -208,6 +245,19 @@ function safeRateLimit(value: string | null): SystemRateLimit {
       return { enabled: false };
     }
     return normalizeRateLimit(parsed as SystemRateLimit);
+  } catch {
+    return { enabled: false };
+  }
+}
+
+function safeFallback(value: string | null): ToolFallbackConfig {
+  if (!value) return { enabled: false };
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { enabled: false };
+    }
+    return normalizeFallback(parsed as ToolFallbackConfig);
   } catch {
     return { enabled: false };
   }
@@ -234,6 +284,11 @@ function cleanSystemId(value: string | undefined): string {
   const cleaned = (value ?? "default").trim();
   if (!cleaned) throw new Error("systemId is required");
   return cleaned;
+}
+
+function cleanOptional(value: string | null | undefined): string | undefined {
+  const cleaned = (value ?? "").trim();
+  return cleaned || undefined;
 }
 
 function safeJson(
