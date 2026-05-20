@@ -104,6 +104,12 @@ function migrate(db: Database.Database) {
       status      TEXT NOT NULL CHECK(status IN ('pending','indexing','ready','error')) DEFAULT 'pending',
       error       TEXT,
       chunk_count INTEGER NOT NULL DEFAULT 0,
+      system_id   TEXT NOT NULL DEFAULT 'default',
+      skill_id    TEXT,
+      visibility  TEXT NOT NULL CHECK(visibility IN ('system','skill','user')) DEFAULT 'system',
+      user_id     TEXT,
+      tenant_id   TEXT,
+      kb_role_ids TEXT NOT NULL DEFAULT '[]',
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
     );
@@ -265,6 +271,17 @@ function migrate(db: Database.Database) {
     "fallback",
     "TEXT NOT NULL DEFAULT '{\"enabled\":false}'",
   );
+  addColumnIfMissing(db, "files", "system_id", "TEXT NOT NULL DEFAULT 'default'");
+  addColumnIfMissing(db, "files", "skill_id", "TEXT");
+  addColumnIfMissing(
+    db,
+    "files",
+    "visibility",
+    "TEXT NOT NULL DEFAULT 'system'",
+  );
+  addColumnIfMissing(db, "files", "user_id", "TEXT");
+  addColumnIfMissing(db, "files", "tenant_id", "TEXT");
+  addColumnIfMissing(db, "files", "kb_role_ids", "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing(db, "skills", "version", "TEXT NOT NULL DEFAULT 'v1'");
   addColumnIfMissing(db, "skills", "steps", "TEXT NOT NULL DEFAULT '[]'");
   db.exec(`

@@ -1,4 +1,9 @@
 import { getDb, ensureVecSchema } from "./db";
+import {
+  canReadRagScope,
+  parseScopeMetadata,
+  type RagScopeFilter,
+} from "./rag-scope";
 
 /** 把 number[] 序列化为 sqlite-vec 期望的 Float32 LE Buffer */
 function serializeFloat32(vec: number[]): Buffer {
@@ -103,6 +108,7 @@ export function vectorSearch(
     k?: number;
     fileIds?: string[];
     modalities?: Array<"text" | "image">;
+    scopeFilter?: RagScopeFilter;
   } = {},
 ): SearchHit[] {
   const db = getDb();
@@ -164,6 +170,19 @@ export function vectorSearch(
     if (!c) continue;
     if (options.fileIds && !options.fileIds.includes(c.file_id)) continue;
     if (options.modalities && !options.modalities.includes(c.modality)) continue;
+    const parsedMeta = c.meta ? JSON.parse(c.meta) : null;
+    const scope = parseScopeMetadata(
+      JSON.stringify(
+        parsedMeta?.scope ?? {
+          systemId: "default",
+          visibility: "system",
+          kbRoleIds: [],
+        },
+      ),
+    );
+    if (options.scopeFilter && !canReadRagScope(scope, options.scopeFilter)) {
+      continue;
+    }
     hits.push({
       chunk_id,
       file_id: c.file_id,
@@ -173,7 +192,7 @@ export function vectorSearch(
       image_path: c.image_path,
       file_name: c.file_name,
       distance,
-      meta: c.meta ? JSON.parse(c.meta) : null,
+      meta: parsedMeta,
     });
     if (hits.length >= k) break;
   }

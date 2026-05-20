@@ -10,7 +10,7 @@ import { callRagHttpPath } from "./http-client";
 import { getMcpToolByName, listEnabledMcpTools } from "./tool-config";
 
 import type { PolicyContext, UserContext } from "../identity-context";
-import type { SystemRateLimit } from "../systems";
+import { getSystem, type SystemRateLimit } from "../systems";
 
 export type ToolHandlerType = "local" | "rag-http" | "llm";
 
@@ -123,9 +123,22 @@ async function ragSearch(
       ? Math.min(Math.max(Math.trunc(params.topK), 1), 20)
       : 5;
   const fileIds = stringArrayParam(params.fileIds) ?? runtime.fileIds;
+  const systemId = stringOptional(params.systemId) ?? runtime.policyContext?.systemId ?? "default";
+  const skillId = stringOptional(params.skillId) ?? runtime.policyContext?.skillId;
+  const system = getSystem(systemId);
+  const mode = system?.mode ?? "personal";
+  if (mode === "enterprise" && !systemId) {
+    throw new Error("RagScopeDenied: systemId is required");
+  }
   const { hits } = await retrieve(query, {
     k: topK,
     fileIds: fileIds && fileIds.length ? fileIds : undefined,
+    scopeFilter: {
+      systemId,
+      skillId,
+      userContext: runtime.userContext,
+      mode,
+    },
   });
   return {
     chunks: hits.map((hit) => ({
@@ -137,6 +150,7 @@ async function ragSearch(
       chunkId: hit.chunk_id,
       ord: hit.ord,
       modality: hit.modality,
+      scope: (hit.meta as any)?.scope,
     })),
   };
 }
@@ -193,6 +207,10 @@ function stringArrayParam(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const arr = value.filter((item): item is string => typeof item === "string");
   return arr.length ? arr : undefined;
+}
+
+function stringOptional(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function messageText(content: unknown): string {

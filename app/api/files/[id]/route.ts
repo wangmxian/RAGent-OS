@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteFile, indexFile } from "@/lib/files/ingest";
+import { deleteFile, indexFile, updateFileScope } from "@/lib/files/ingest";
 import { getDb } from "@/lib/db";
+import { normalizeScopeMetadata } from "@/lib/rag-scope";
 import path from "node:path";
 import fs from "node:fs/promises";
 
@@ -83,6 +84,21 @@ export async function POST(
         "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(row.name)}`,
       },
     });
+  }
+  if (action === "scope") {
+    let body: any = {};
+    try {
+      body = await req.json();
+    } catch {}
+    try {
+      const scope = updateFileScope(params.id, normalizeScopeMetadata(body));
+      return NextResponse.json({ ok: true, scope });
+    } catch (e: any) {
+      return NextResponse.json(
+        { error: e?.message || String(e) },
+        { status: 400 },
+      );
+    }
   }
   return NextResponse.json({ error: "unknown action" }, { status: 400 });
 }
